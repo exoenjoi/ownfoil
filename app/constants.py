@@ -35,7 +35,9 @@ DEFAULT_SETTINGS = {
                 "windows_compatible": False,
                 "templates": {
                     "base": "{titleName}/{titleName} [{appId}][v{appVersion}]",
-                    "update": "{titleName}/{titleName} [{appId}][v{appVersion}]",
+                    # [UPD] because otherwise an update is named exactly like its base game,
+                    # and only one hex digit of the app id (…2000 vs …2800) tells them apart.
+                    "update": "{titleName}/{titleName} [UPD][{appId}][v{appVersion}]",
                     "dlc": "{titleName}/{appName} [{appId}][v{appVersion}]",
                     "multi": "{titleName}/{titleName} [{titleId}]"
                 }
