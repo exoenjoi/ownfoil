@@ -66,7 +66,10 @@
             : `${results.length} ${results.length === 1 ? 'result' : 'results'}`);
 
         results.forEach(function (game) {
-            const card = $('<div class="card text-bg-dark game-card"></div>').css('cursor', 'pointer');
+            // The card is the page's only action, so it has to be reachable without a mouse.
+            const card = $('<div class="card text-bg-dark game-card"></div>')
+                .attr({'tabindex': '0', 'role': 'button', 'aria-label': `Search releases for ${game.name}`})
+                .css('cursor', 'pointer');
 
             const art = game.bannerUrl || game.iconUrl;
             if (art) {
@@ -88,7 +91,14 @@
 
             card.append(overlay);
             // Owned games stay clickable: the user may want a different release.
-            card.on('click', () => openReleaseSearch({title_id: game.title_id, catalog: true}));
+            const open = () => openReleaseSearch({title_id: game.title_id, catalog: true});
+            card.on('click', open);
+            card.on('keydown', function (event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();  // Space would scroll the page
+                    open();
+                }
+            });
             grid.append(card);
         });
     }
