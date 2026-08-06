@@ -279,6 +279,12 @@ def downloads_page():
     return render_template('downloads.html', title='Downloads',
                            admin_account_created=admin_account_created())
 
+@app.route('/discover')
+@access_required('admin')
+def discover_page():
+    return render_template('discover.html', title='Discover',
+                           admin_account_created=admin_account_created())
+
 @app.get('/api/settings')
 @access_required('admin')
 def get_settings_api():
@@ -491,7 +497,8 @@ def search_downloader_api():
     reload_conf()
     try:
         target = downloader_lib.resolve_target(data.get('app_id'), data.get('app_version'),
-                                               data.get('title_id'))
+                                               data.get('title_id'),
+                                               catalog=bool(data.get('catalog')))
     except FileNotFoundError:
         return jsonify({'success': False, 'errors': [
             {'path': 'downloader', 'error': 'TitleDB is not available yet, scan the library first.'}]})
@@ -504,6 +511,25 @@ def search_downloader_api():
         'target': target,
         'releases': downloader_lib.search_releases(target, app_settings),
     })
+
+CATALOG_SEARCH_LIMIT = 60
+
+@app.post('/api/catalog/search')
+@access_required('admin')
+def search_catalog_api():
+    query = ((request.json or {}).get('query') or '').strip()
+    # Two characters is the floor: one letter matches most of the catalog and the
+    # scan is wasted work.
+    if len(query) < 2:
+        return jsonify({'success': True, 'errors': [], 'results': [], 'truncated': False})
+    try:
+        found = downloader_lib.search_catalog(query, CATALOG_SEARCH_LIMIT)
+    except FileNotFoundError:
+        found = None
+    if found is None:
+        return jsonify({'success': False, 'errors': [
+            {'path': 'catalog', 'error': 'TitleDB is not available yet, scan the library first.'}]})
+    return jsonify({'success': True, 'errors': [], **found})
 
 @app.post('/api/downloader/grab')
 @access_required('admin')
