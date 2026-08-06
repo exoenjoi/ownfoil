@@ -3,7 +3,7 @@ version: "3"
 services:
   ownfoil:
     container_name: ownfoil
-    image: a1ex4/ownfoil:latest
+    image: ghcr.io/exoenjoi/ownfoil:latest
     environment:
       # For write permission in config directory
       - PUID=1000
@@ -15,6 +15,9 @@ services:
       # - USER_GUEST_NAME=guest
       # - USER_GUEST_PASSWORD=oerze!@8981
     volumes:
+      # Mount the common parent of your sources and of the organizer destination as a single
+      # volume: hardlinks cannot cross filesystems, two separate mounts would fail with EXDEV.
+      # Here /games/torrents is the library and /games/organized the organizer destination.
       - /your/game/directory:/games
       - ./config:/app/config
       - ./data:/app/data

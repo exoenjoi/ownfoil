@@ -9,6 +9,28 @@
 [![Sphaira Version](https://img.shields.io/badge/Sphaira-v1.0.0-%233cd57a)](https://github.com/ITotalJustice/sphaira)
 [![CyberFoil Version](https://img.shields.io/badge/CyberFoil-v1.4.1-firebrick)](https://github.com/luketanti/CyberFoil)
 
+> [!IMPORTANT]
+> ## This is a fork [![Made with Claude Code](https://img.shields.io/badge/made%20with-Claude%20Code-D97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
+>
+> Fork of [a1ex4/ownfoil](https://github.com/a1ex4/ownfoil) adding a **hardlink mode to the
+> organizer**, for libraries whose files cannot be renamed - typically torrents that are still
+> being seeded.
+>
+> Upstream, the organizer renames and moves your files in place. Here, setting an
+> `Organizer > Destination folder` in the settings makes Ownfoil build the templated tree with
+> **hardlinks** in that folder instead: the source files are never renamed, never moved, never
+> deleted, and the destination folder becomes your clean, organized library. Hardlinks cost no
+> extra disk space, both names point at the same data.
+>
+> The destination folder is deliberately *not* an Ownfoil library: it is never scanned nor
+> watched, so each game stays a single entry in the shop and is identified only once. The shop
+> publishes the organized names while downloads keep serving the same file.
+>
+> See [Organizer destination (hardlink mode)](#organizer-destination-hardlink-mode) for setup, and
+> [`ghcr.io/exoenjoi/ownfoil`](https://github.com/exoenjoi/ownfoil/pkgs/container/ownfoil) for the
+> image built from this fork.
+>
+> Everything else is upstream's work - the original README follows.
 
 Ownfoil is a Nintendo Switch library manager, that will also turn your library into a fully customizable and self-hosted Shop, supporting multiple clients. The goal of this project is to manage your library, identify any missing content (DLCs or updates) and provide a user friendly way to browse and install your content. Some of the features include:
 - [x] multi user authentication
@@ -173,6 +195,34 @@ Requirements:
 > [!NOTE]
 > Stale links are not cleaned up: changing a template or deleting a source file leaves the old link
 > behind in the destination folder.
+
+#### Setup with docker compose
+
+```yaml
+services:
+  ownfoil:
+    container_name: ownfoil
+    image: ghcr.io/exoenjoi/ownfoil:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      # One single mount holding both directories, hardlinks cannot cross filesystems
+      - /mnt/nas/switch:/games
+      - ./config:/app/config
+      - ./data:/app/data
+    ports:
+      - "8465:8465"
+```
+
+Then, in `Settings`:
+1. add `/games/torrents` (where your torrent client downloads) as a library path;
+2. under `Organizer`, tick `Enable organizer` and set `Destination folder` to `/games/organized`;
+3. hit `Submit`, then `Scan library`.
+
+`/games/organized` now holds the templated tree, and `/games/torrents` is untouched and still
+seeding. Check it with `ls -li`: a source and its link share the same inode number and a link
+count of 2.
 
 ## Titles configuration
 In the `Settings` page under the `Titles` section is where you specify the language of your Shop (currently the same for all users).
