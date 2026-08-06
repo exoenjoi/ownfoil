@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import downloader
 import downloads_store as store
 from downloader import best_release, rank_releases
 
@@ -132,6 +133,44 @@ def test_store_round_trip():
         assert store.delete(second['id'])
         assert not store.delete(second['id'])
         assert len(store.all()) == 1
+
+
+# ------------------------------------------------------------- catalog target
+
+def with_fake_game_info(name):
+    """Swap the titledb lookup downloader uses, returning a restore callable."""
+    previous = downloader.titles_lib.get_game_info
+    downloader.titles_lib.get_game_info = lambda title_id: {'name': name} if name else None
+
+    def restore():
+        downloader.titles_lib.get_game_info = previous
+    return restore
+
+
+def test_catalog_target_describes_a_base_game():
+    # A game absent from the library has no Apps row, so the target is built from
+    # titledb alone. For a base game the app id is the title id.
+    restore = with_fake_game_info("Yoshi's Crafted World")
+    try:
+        target = downloader.catalog_target('01006000040C2000')
+    finally:
+        restore()
+    assert target == {
+        'title_id': '01006000040C2000',
+        'app_id': '01006000040C2000',
+        'app_version': '0',
+        'app_type': 'BASE',
+        'name': "Yoshi's Crafted World",
+        'patch_level': 0,
+    }
+
+
+def test_catalog_target_without_a_known_name_is_none():
+    restore = with_fake_game_info(None)
+    try:
+        assert downloader.catalog_target('01006000040C2000') is None
+    finally:
+        restore()
 
 
 if __name__ == '__main__':

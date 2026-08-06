@@ -10,7 +10,7 @@ import downloads_store as store
 import prowlarr
 import qbittorrent
 import titles as titles_lib
-from constants import APP_TYPE_DLC, APP_TYPE_UPD
+from constants import APP_TYPE_BASE, APP_TYPE_DLC, APP_TYPE_UPD
 from db import Apps, Titles, is_app_owned
 from settings import load_settings
 
@@ -138,6 +138,25 @@ def _game_name(title_id):
     return None if name in (None, 'Unrecognized') else name
 
 
+def catalog_target(title_id):
+    """Target for a base game that is not in the library at all.
+
+    No Apps row exists for it, so everything comes from titledb. A base game's app
+    id is its title id.
+    """
+    name = _game_name(title_id)
+    if not name:
+        return None
+    return {
+        'title_id': title_id,
+        'app_id': title_id,
+        'app_version': '0',
+        'app_type': APP_TYPE_BASE,
+        'name': name,
+        'patch_level': 0,
+    }
+
+
 def with_titledb(func):
     """load_titledb() only increments the counter, the caller must decrement it.
 
@@ -187,13 +206,18 @@ def _latest(apps):
 
 
 @with_titledb
-def resolve_target(app_id=None, app_version=None, title_id=None):
+def resolve_target(app_id=None, app_version=None, title_id=None, catalog=False):
     """Target of a manual search from the UI.
 
     Accepts an exact app, an app id whose latest missing version is picked, or a title id
     whose latest missing update is picked. Resolving here rather than in the browser keeps
     the app id arithmetic (base id -> update id) in one place.
+
+    catalog=True means the title comes from the Discover page and has no Apps row: the
+    flag is explicit so the library's own search keeps its behaviour untouched.
     """
+    if catalog:
+        return catalog_target(title_id) if title_id else None
     if app_id and app_version:
         app = Apps.query.filter_by(app_id=app_id, app_version=str(app_version)).first()
     elif app_id:
@@ -214,6 +238,33 @@ def resolve_target(app_id=None, app_version=None, title_id=None):
     if not name:
         return None
     return _target(app, resolved_title_id, name)
+
+
+@with_titledb
+def search_catalog(query, limit=60):
+    """Base games matching the query, flagged with whether the library owns them."""
+    records = titles_lib.search_base_games(query, limit)
+    if records is None:
+        return None
+
+    truncated = len(records) > limit
+    records = records[:limit]
+    title_ids = [record['id'] for record in records]
+    owned = set()
+    if title_ids:
+        owned = {app.app_id for app in Apps.query.filter(
+            Apps.app_id.in_(title_ids), Apps.owned.is_(True)).all()}
+
+    return {
+        'results': [{
+            'title_id': record['id'],
+            'name': record['name'],
+            'iconUrl': record.get('iconUrl'),
+            'bannerUrl': record.get('bannerUrl'),
+            'owned': record['id'] in owned,
+        } for record in records],
+        'truncated': truncated,
+    }
 
 
 # ---------------------------------------------------------------- search & grab
