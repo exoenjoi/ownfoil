@@ -5,14 +5,16 @@
 {% include 'nav.html' %}
 <div id="content" class="container-fluid mt-3">
 
-    <div class="row gy-2 gx-3 align-items-center justify-content-md-center">
+    <div class="row gy-2 gx-3 align-items-center library-toolbar">
 
         <div class="col-auto">
             <div class="btn-group dropdown-center" role="group">
                 <div class="btn-group" role="group">
                     <button id="filterDropdownBtn" type="button" class="btn btn-primary dropdown-toggle"
-                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                        aria-label="Filters" title="Filters">
                         <i class="bi bi-funnel-fill"></i>
+                        <span id="activeFilterCount" class="badge rounded-pill text-bg-light d-none">0</span>
                     </button>
                     <ul class="dropdown-menu">
                         <li>
@@ -80,57 +82,61 @@
                                 </div>
                             </div>
                         </li>
-                        <!-- <div class="text-center m-2">
-                            <button id="btnApplyFilters" type="button" class="btn btn-primary" style="width: 85%;">Apply
-                                filters</button>
-                        </div> -->
                     </ul>
                 </div>
             </div>
         </div>
 
-        <div class="col-auto">
-            <input type="text" id="textFilter" class="form-control" placeholder="Search titles...">
+        <div class="col-12 col-sm">
+            <input type="search" id="textFilter" class="form-control" placeholder="Search titles, title IDs...">
         </div>
         <div class="col-auto">
-            <div class="btn-group" role="group">
-                <button id="view-toggle-btn-card" type="button" class="btn btn-primary view-toggle-btn active" data-view="card"><i
-                        class="bi bi-card-heading"></i></button>
-                <button id="view-toggle-btn-icon" type="button" class="btn btn-primary view-toggle-btn" data-view="icon"><i
-                        class="bi bi-grid-fill"></i></button>
-                <button id="view-toggle-btn-list" type="button" class="btn btn-primary view-toggle-btn" data-view="list" disabled=""><i
-                        class="bi bi-list-ul"></i></button>
+            <div class="btn-group" role="group" aria-label="View">
+                <button id="view-toggle-btn-card" type="button" class="btn btn-primary view-toggle-btn" data-view="card"
+                    aria-label="Card view" title="Card view"><i class="bi bi-card-heading"></i></button>
+                <button id="view-toggle-btn-icon" type="button" class="btn btn-primary view-toggle-btn" data-view="icon"
+                    aria-label="Icon view" title="Icon view"><i class="bi bi-grid-fill"></i></button>
+                <button id="view-toggle-btn-list" type="button" class="btn btn-primary view-toggle-btn" data-view="list"
+                    aria-label="List view" title="List view"><i class="bi bi-list-ul"></i></button>
             </div>
         </div>
         <div class="col-auto">
             <div class="btn-group dropdown-center" role="group">
                 <button id="itemsPerPageDropdownBtn" type="button" class="btn btn-primary dropdown-toggle"
                     data-bs-toggle="dropdown" aria-expanded="false">
-                    Items per page
+                    12 per page
                 </button>
                 <ul class="dropdown-menu" aria-labelledby="itemsPerPageDropdownBtn">
-                    <li><button class="dropdown-item items-per-page" data-value="9">9</button></li>
                     <li><button class="dropdown-item items-per-page" data-value="12">12</button></li>
-                    <li><button class="dropdown-item items-per-page" data-value="18">18</button></li>
-                    <li><button class="dropdown-item items-per-page" data-value="27">27</button></li>
+                    <li><button class="dropdown-item items-per-page" data-value="24">24</button></li>
+                    <li><button class="dropdown-item items-per-page" data-value="48">48</button></li>
+                    <li><button class="dropdown-item items-per-page" data-value="96">96</button></li>
+                    <li>
+                        <hr class="dropdown-divider">
+                    </li>
                     <li>
                         <div class="dropdown-item">
-                            <input type="number" id="customItemsPerPage" class="form-control" placeholder="Custom">
-                            <button id="applyCustomItemsPerPage" class="btn btn-primary mt-2">Apply</button>
+                            <div class="input-group">
+                                <input type="number" id="customItemsPerPage" class="form-control" min="1" placeholder="Custom">
+                                <button id="applyCustomItemsPerPage" class="btn btn-primary">Set</button>
+                            </div>
                         </div>
                     </li>
                 </ul>
             </div>
         </div>
-        <!-- Card size slider -->
-        <div class="col-auto">
-            <!-- <label for="cardSizeRange" class="form-label">Card Size</label> -->
-            <input type="range" class="form-range" min="1" max="5" step="1" id="cardSizeRange">
+        <!-- Tile size slider -->
+        <div class="col-auto" id="tileSizeWrapper">
+            <input type="range" class="form-range" min="1" max="5" step="1" id="cardSizeRange"
+                aria-label="Tile size" title="Tile size">
         </div>
     </div>
-    <div class="grid-container" id="gridContainer">
-        <div class="row g-3" id="gameGrid"></div>
-        <!-- <div class="row row-cols-1 row-cols-md-3 g-4" id="gameGrid"></div> -->
+
+    <div id="librarySummary" class="library-summary"></div>
+
+    <div class="grid-container">
+        <div class="library-grid" id="gameGrid"></div>
+        <div id="libraryEmpty" class="library-empty d-none"></div>
     </div>
 
     <!-- Pagination controls -->
@@ -145,8 +151,11 @@
     let itemsPerPage = 12;
     let currentPage = 1;
     let totalGames = 0;
-    let cardSize = 3; // Default card size
+    let cardSize = 3; // Default tile size
     let currentView = 'card'; // Default view is 'card'
+
+    // Smaller number = larger tiles. Drives the CSS grid's minimum column width.
+    const TILE_WIDTHS = { 1: 420, 2: 300, 3: 220, 4: 165, 5: 125 };
 
     function fetchGames() {
         return new Promise((resolve, reject) => {
@@ -161,17 +170,73 @@
         });
     }
 
+    // One entry per file in the library becomes one entry per title: a game and its DLCs
+    // are the same object to the eye, so the card can state what the title is missing.
+    function groupTitles(entries) {
+        const groups = new Map();
+        entries.forEach(entry => {
+            const key = entry.title_id || entry.app_id;
+            let group = groups.get(key);
+            if (!group) {
+                group = { key: key, name: entry.title_id_name || entry.name, base: null, dlcs: [] };
+                groups.set(key, group);
+            }
+            if (entry.app_type === 'DLC') {
+                group.dlcs.push(entry);
+            } else if (!group.base) {
+                group.base = entry;
+            }
+        });
+
+        return [...groups.values()].map(group => {
+            const lead = group.base || group.dlcs[0];
+            const ownedDlcs = group.dlcs.filter(dlc => dlc.owned).length;
+            return {
+                key: group.key,
+                name: group.name || lead.name,
+                lead: lead,
+                base: group.base,
+                dlcs: group.dlcs,
+                ownedDlcs: ownedDlcs,
+                // The amber outline marks a title you cannot play at its current version:
+                // no base file, or a pending update. Missing DLC is common enough that
+                // outlining it too would light up the whole page — the counter says it.
+                incomplete: group.base ? (!group.base.owned || group.base.has_latest_version === false) : true
+            };
+        });
+    }
+
+    function pageOf(groups) {
+        const start = (currentPage - 1) * itemsPerPage;
+        return groups.slice(start, start + itemsPerPage);
+    }
+
     function renderGames() {
-        // Set slider to show `cardsize` columns by default
         $('#cardSizeRange').val(cardSize);
+        applyTileSize();
+
+        const groups = groupTitles(filteredGames);
+        const totalPages = Math.max(1, Math.ceil(groups.length / itemsPerPage));
+        if (currentPage > totalPages) {
+            currentPage = totalPages;
+        }
+
+        const gameGrid = $('#gameGrid');
+        gameGrid.empty().removeClass('view-list');
+        $('#tileSizeWrapper').toggleClass('invisible', currentView === 'list');
 
         if (currentView === 'card') {
-            renderCardView();
-            adjustCardSizes();
+            renderCardView(pageOf(groups));
         } else if (currentView === 'icon') {
-            renderIconView();
-            adjustIconSizes();
+            renderIconView(pageOf(groups));
+        } else {
+            gameGrid.addClass('view-list');
+            renderListView(pageOf(groups));
         }
+
+        renderSummary(groups);
+        renderEmptyState(groups.length);
+        updatePaginationControls(groups.length);
 
         // init version tooltips
         const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]')
@@ -182,122 +247,225 @@
         const popoverList = [...popoverTriggerList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl))
     }
 
-    function renderCardView() {
-        // Render card view logic...
+    function versionBadgeFor(group) {
+        const base = group.base;
+        if (!base || base.has_latest_version === undefined) {
+            return null;
+        }
+        const badge = $('<span class="badge rounded-pill game-tag version-tag"></span>')
+            .addClass(`text-bg-${base.has_latest_version ? 'success' : 'warning'}`)
+            .html(`<i class="bi ${base.has_latest_version ? 'bi-check-circle-fill' : 'bi-arrow-down-circle'}"></i>`);
+
+        const versions = Array.isArray(base.version) ? base.version : null;
+        if (versions && versions.length) {
+            const rows = versions.slice().reverse().map(version => `
+                <div class="version-row">
+                    <span class="version-number">v${version.version}</span>
+                    <span class="version-date">${version.release_date}</span>
+                    <span class="badge rounded-pill text-bg-${version.owned ? 'success' : 'warning'}">${version.owned ? 'Owned' : 'Missing'}</span>
+                </div>`).join('');
+            badge.attr({ 'tabindex': '0', 'role': 'button' }).popover({
+                title: `${base.name} updates`,
+                content: rows,
+                html: true,
+                trigger: 'click',
+                placement: 'top',
+            });
+            badge.css('cursor', 'pointer');
+            // The document-level handler below closes any open popover; without this the
+            // badge's own click bubbles straight into it and the popover never shows.
+            badge.on('click', e => e.stopPropagation());
+        } else {
+            badge.attr('data-bs-toggle', 'tooltip');
+            badge.attr('data-bs-placement', 'top');
+            badge.attr('data-bs-title', versions ? 'No update released' : 'Version v' + base.version);
+        }
+        return badge;
+    }
+
+    function dlcBadgeFor(group) {
+        if (!group.dlcs.length) {
+            return null;
+        }
+        const complete = group.ownedDlcs === group.dlcs.length;
+        return $('<span class="badge rounded-pill game-tag" data-bs-toggle="tooltip" data-bs-placement="top"></span>')
+            .addClass(`text-bg-${complete ? 'success' : 'warning'}`)
+            .attr('data-bs-title', `${group.ownedDlcs} of ${group.dlcs.length} DLC owned`)
+            .html(`<i class="bi bi-box-seam-fill"></i> ${group.ownedDlcs}/${group.dlcs.length}`);
+    }
+
+    function tagsFor(group) {
+        const tags = $('<div class="tags-container"></div>');
+        if (!group.base) {
+            tags.append($('<span class="badge rounded-pill text-bg-warning game-tag"></span>').text('DLC only'));
+        } else if (!group.base.owned) {
+            tags.append($('<span class="badge rounded-pill text-bg-warning game-tag"></span>').text('Base missing'));
+        }
+        const version = versionBadgeFor(group);
+        if (version) {
+            tags.append(version);
+        }
+        const dlc = dlcBadgeFor(group);
+        if (dlc) {
+            tags.append(dlc);
+        }
+        const search = missingContentSearchButton(group);
+        if (search) {
+            tags.append(search);
+        }
+        return tags;
+    }
+
+    function renderCardView(pageGroups) {
         const gameGrid = $('#gameGrid');
-        gameGrid.empty(); // Clear existing games
 
-        // Get games for the current page
-        start = (currentPage - 1) * itemsPerPage
-        end = start + itemsPerPage
-        paginatedGames = filteredGames.slice(start, end);
+        pageGroups.forEach(function (group) {
+            const card = $('<div class="card text-bg-dark game-card"></div>').toggleClass('is-incomplete', group.incomplete);
 
-        paginatedGames.forEach(function (game) {
-            const gameCol = $('<div class="col game-col"></div>').addClass(`col-${12 / getColumnsForCardSize(cardSize)}`);
-
-            const card = $('<div class="card text-bg-dark game-card"></div>');
-
-            const img = $('<img class="card-img"></img>').attr('src', game.bannerUrl);
+            const img = $('<img class="card-img" alt="">').attr('src', group.lead.bannerUrl);
             card.append(img);
 
             const cardOverlay = $('<div class="card-img-overlay game-info"></div>');
 
-            const title = $('<h5 class="card-title game-title"></h5>').text(game.title_id_name || game.name);
+            const title = $('<h5 class="card-title game-title"></h5>').text(group.name);
             cardOverlay.append(title);
 
-            const description = $('<p class="card-text game-description"></p>');
-            if (game.app_type === 'DLC') {
-                const small = $('<small></small>').text(`${game.name} | `);
-                description.append(small);
-            }
-            const small = $('<small></small>').text(game.id);
-            description.append(small);
-            cardOverlay.append(description);
-
-            const tagsContainer = $('<div class="tags-container"></div>');
-
-            const typeBadgeClass = (game.owned === false) ? 'text-bg-warning' : 'text-bg-info';
-            const typeBadge = $(`<span class="badge rounded-pill ${typeBadgeClass} game-tag"></span>`).text(game.app_type);
-            tagsContainer.append(typeBadge);
-
-            if (game.has_latest_version !== undefined) {
-                const versionBadge = $(`<span class="badge rounded-pill game-tag version-tag" title="${game.name} [${game.title_id}] Updates"></span>`)
-                    .addClass(`text-bg-${game.has_latest_version ? 'success' : 'warning'}`)
-                    .html(`<i class="bi ${game.has_latest_version ? 'bi-check-circle-fill' : 'bi-arrow-down-circle'}"></i>`);
-                if (game.version !== undefined && game.version.length && Array.isArray(game.version)) {
-                    const popoverContent = game.version.map(version => 
-                        `${version.release_date}: v${version.version} ${version.owned ? 'Owned' : 'Missing'}`
-                    ).join('\n');
-                    versionBadge.popover({
-                        content: popoverContent,
-                        trigger: 'click',
-                        placement: 'top',
-                    });
-                    versionBadge.css('cursor', 'pointer');
-                } else {
-                    // version tooltip on hover
-                    versionBadge.attr("data-bs-toggle", "tooltip")
-                    versionBadge.attr("data-bs-placement", "top")
-
-                    if (game.version !== undefined && !game.version.length && Array.isArray(game.version)){
-                        versionBadge.attr("data-bs-title", "Version v0")
-                    } else if (game.version !== undefined && game.version.length) {
-                        versionBadge.attr("data-bs-title", "Version v" + game.version)
-                    }
-                }
-                tagsContainer.append(versionBadge);
-            }
-
-            if (game.has_all_dlcs !== undefined) {
-                const dlcBadge = $('<span class="badge rounded-pill game-tag"></span>').addClass(`text-bg-${game.has_all_dlcs ? 'success' : 'warning'}`).html('<i class="bi bi-box-seam-fill"></i>');
-                tagsContainer.append(dlcBadge);
-            }
-
-            const searchButton = missingContentSearchButton(game);
-            if (searchButton) {
-                tagsContainer.append(searchButton);
-            }
-
-            cardOverlay.append(tagsContainer);
+            cardOverlay.append(tagsFor(group));
             card.append(cardOverlay);
-            gameCol.append(card);
-            gameGrid.append(gameCol);
+            gameGrid.append(card);
         });
-        // Update pagination
-        updatePaginationControls(filteredGames.length)
-
     }
 
-    function renderIconView() {
-        // Render icon view logic...
+    function renderIconView(pageGroups) {
         const gameGrid = $('#gameGrid');
-        gameGrid.empty(); // Clear existing games
-        // Get games for the current page
-        start = (currentPage - 1) * itemsPerPage
-        end = start + itemsPerPage
-        baseGames = filteredGames.filter(game => game.app_type === 'BASE');
-        paginatedGames = baseGames.slice(start, end);
 
-        paginatedGames.forEach(game => {
-            const icon = $('<img class="game-icon">').attr('src', game.iconUrl);
-            gameGrid.append(icon);
+        pageGroups.forEach(group => {
+            const tile = $('<div class="game-icon-tile"></div>').toggleClass('is-incomplete', group.incomplete);
+            tile.append($('<img class="game-icon">').attr({ 'src': group.lead.iconUrl, 'alt': group.name, 'title': group.name }));
+            gameGrid.append(tile);
         });
-
-        // Adjust icon sizes based on the slider value
-        adjustIconSizes(cardSize);
-        // Update pagination
-        updatePaginationControls(baseGames.length)
     }
 
-    function getColumnsForCardSize(size) {
-        switch (size) {
-            case 1: return 1; // 2 columns
-            case 2: return 2; // 3 columns
-            case 3: return 3; // 4 columns
-            case 4: return 4; // 6 columns
-            case 5: return 6; // 8 columns
-            default: return 4; // default to 3 columns
+    function renderListView(pageGroups) {
+        const gameGrid = $('#gameGrid');
+
+        pageGroups.forEach(group => {
+            const row = $('<div class="library-row"></div>').toggleClass('is-incomplete', group.incomplete);
+            row.append($('<img class="library-row-icon" alt="">').attr('src', group.lead.iconUrl));
+
+            const main = $('<div class="library-row-main"></div>');
+            main.append($('<div class="library-row-title"></div>').text(group.name));
+            main.append($('<div class="library-row-meta"></div>').text(group.lead.title_id || group.lead.id));
+            row.append(main);
+
+            row.append(tagsFor(group).removeClass('tags-container').addClass('library-row-tags'));
+            gameGrid.append(row);
+        });
+    }
+
+    function renderSummary(groups) {
+        const summary = $('#librarySummary');
+        summary.empty();
+
+        if (!groups.length) {
+            return;
         }
+
+        const pendingUpdates = groups.filter(group => group.base && group.base.has_latest_version === false).length;
+        const missingDlcs = groups.filter(group => group.ownedDlcs < group.dlcs.length).length;
+
+        summary.append($('<span></span>').text(`${groups.length} ${groups.length === 1 ? 'title' : 'titles'}`));
+
+        if (pendingUpdates) {
+            summary.append(shortcut(`${pendingUpdates} missing an update`, () => {
+                $('#updateMissingUpdate').prop('checked', true).trigger('change');
+            }));
+        }
+        if (missingDlcs) {
+            summary.append(shortcut(`${missingDlcs} missing DLC`, () => {
+                $('#completionMissingDlc').prop('checked', true).trigger('change');
+            }));
+        }
+        if (anyFilterActive()) {
+            summary.append(shortcut('Clear filters', clearFilters, 'clear'));
+        }
+    }
+
+    function shortcut(label, onClick, extraClass) {
+        return $('<button type="button" class="btn btn-link btn-sm library-shortcut"></button>')
+            .addClass(extraClass || '')
+            .text(label)
+            .on('click', onClick);
+    }
+
+    function anyFilterActive() {
+        return Boolean(activeTypeFilter || activeOwnershipFilter || activeUpdateFilter
+            || activeCompletionFilter || $('#textFilter').val());
+    }
+
+    function clearFilters() {
+        $('#typeAll, #ownershipAll, #updateAll, #completionAll').prop('checked', true);
+        $('#textFilter').val('');
+        localStorage.removeItem('searchTerm');
+        updateFilter();
+        saveFiltersToStorage();
+        applyFilters();
+    }
+
+    function updateFilterCount() {
+        const count = [activeTypeFilter, activeOwnershipFilter, activeUpdateFilter, activeCompletionFilter]
+            .filter(Boolean).length;
+        $('#activeFilterCount').text(count).toggleClass('d-none', count === 0);
+    }
+
+    function renderEmptyState(count) {
+        const empty = $('#libraryEmpty');
+        if (count) {
+            empty.addClass('d-none');
+            return;
+        }
+        empty.removeClass('d-none').empty();
+        if (games && games.length) {
+            empty.append($('<p class="mb-2"></p>').text('No titles match these filters.'));
+            empty.append(shortcut('Clear filters', clearFilters, 'clear'));
+        } else {
+            empty.append($('<p class="mb-2"></p>').text('This library is empty.'));
+            empty.append($('<a class="btn btn-primary btn-sm" href="/settings">Add a library path</a>'));
+        }
+    }
+
+    function applyTileSize() {
+        document.getElementById('gameGrid').style.setProperty('--tile', `${TILE_WIDTHS[cardSize] || 220}px`);
+    }
+
+    // Windowed page numbers: a 2000-title library is 167 pages, and rendering them all
+    // makes the control unusable. Show the edges, the current page and its neighbours.
+    function pageNumbers(totalPages) {
+        if (totalPages <= 7) {
+            return Array.from({ length: totalPages }, (_, i) => i + 1);
+        }
+        const pages = new Set([1, totalPages, currentPage]);
+        [-2, -1, 1, 2].forEach(offset => {
+            const page = currentPage + offset;
+            if (page > 1 && page < totalPages) {
+                pages.add(page);
+            }
+        });
+        const sorted = [...pages].sort((a, b) => a - b);
+        const withGaps = [];
+        sorted.forEach((page, index) => {
+            if (index && page - sorted[index - 1] > 1) {
+                withGaps.push('gap');
+            }
+            withGaps.push(page);
+        });
+        return withGaps;
+    }
+
+    function goToPage(page) {
+        currentPage = page;
+        renderGames();
+        document.getElementById('content').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function updatePaginationControls(nbDisplayedGames) {
@@ -305,61 +473,67 @@
         paginationControls.empty(); // Clear existing pagination
 
         const totalPages = Math.ceil(nbDisplayedGames / itemsPerPage);
+        if (totalPages <= 1) {
+            return;
+        }
 
         // Previous button
-        const prevButton = $('<li class="page-item"></li>').addClass(`page-item ${currentPage === 1 ? 'disabled' : ''}`).html(`
+        const prevButton = $('<li class="page-item"></li>').addClass(currentPage === 1 ? 'disabled' : '').html(`
                 <a class="page-link" href="#" aria-label="Previous">
                     <span aria-hidden="true">&laquo;</span>
                 </a>`);
         prevButton.click(function (e) {
             e.preventDefault();
             if (currentPage > 1) {
-                currentPage--;
-                renderGames();
+                goToPage(currentPage - 1);
             }
         });
         paginationControls.append(prevButton);
 
         // Page numbers
-        for (let i = 1; i <= totalPages; i++) {
-            const pageButton = $('<li class="page-item"></li>').addClass(`page-item ${i === currentPage ? 'active' : ''}`).html(`<a class="page-link" href="#">${i}</a>`);
+        pageNumbers(totalPages).forEach(function (page) {
+            if (page === 'gap') {
+                paginationControls.append('<li class="page-item disabled"><span class="page-link">&hellip;</span></li>');
+                return;
+            }
+            const pageButton = $('<li class="page-item"></li>').addClass(page === currentPage ? 'active' : '').html(`<a class="page-link" href="#">${page}</a>`);
             pageButton.click(function (e) {
                 e.preventDefault();
-                currentPage = i;
-                renderGames();
+                goToPage(page);
             });
             paginationControls.append(pageButton);
-        }
+        });
 
         // Next button
-        const nextButton = $('<li class="page-item"></li>').addClass(`page-item ${currentPage === totalPages ? 'disabled' : ''}`).html(`
+        const nextButton = $('<li class="page-item"></li>').addClass(currentPage === totalPages ? 'disabled' : '').html(`
                 <a class="page-link" href="#" aria-label="Next">
                     <span aria-hidden="true">&raquo;</span>
                 </a>`);
         nextButton.click(function (e) {
             e.preventDefault();
             if (currentPage < totalPages) {
-                currentPage++;
-                renderGames();
+                goToPage(currentPage + 1);
             }
         });
         paginationControls.append(nextButton);
     }
 
-    function adjustCardSizes() {
-        const gameGrid = $('#gameGrid');
-        const gameCols = gameGrid.find('.game-col');
-        gameCols.each(function () {
-            $(this).removeClass().addClass(`col game-col col-${12 / getColumnsForCardSize(cardSize)}`);
+    function setItemsPerPage(value) {
+        itemsPerPage = value;
+        localStorage.setItem('itemsPerPage', itemsPerPage);
+        $('#itemsPerPageDropdownBtn').text(`${itemsPerPage} per page`);
+        $('.items-per-page').each(function () {
+            $(this).toggleClass('active', $(this).data('value') === itemsPerPage);
         });
+        currentPage = 1;
     }
 
-    function adjustIconSizes() {
-        // Calculate the size of the icons based on the slider value
-        const iconSize = 100 / (cardSize + 3); // Assuming 100 is the maximum size
-
-        // Update the CSS of the game icons
-        $('.game-icon').css('width', `${iconSize}%`);
+    function setView(view) {
+        currentView = view;
+        localStorage.setItem('currentView', view);
+        $('.view-toggle-btn').removeClass('active').attr('aria-pressed', 'false');
+        $(`.view-toggle-btn[data-view="${view}"]`).addClass('active').attr('aria-pressed', 'true');
+        currentPage = 1;
     }
 
     function saveFiltersToStorage() {
@@ -427,19 +601,14 @@
 
     $(document).ready(function () {
         const savedItemsPerPage = localStorage.getItem('itemsPerPage');
-        if (savedItemsPerPage) {
-            itemsPerPage = parseInt(savedItemsPerPage);
-        }
-
-        const savedCurrentView = localStorage.getItem('currentView');
-        if (savedCurrentView) {
-            currentView = savedCurrentView;
-        }
+        setItemsPerPage(savedItemsPerPage ? parseInt(savedItemsPerPage) : itemsPerPage);
 
         const savedCardSize = localStorage.getItem('cardSize');
         if (savedCardSize){
             cardSize = parseInt(savedCardSize);
         }
+
+        setView(localStorage.getItem('currentView') || currentView);
 
         // Fetch initial set of games and render
         fetchGames().then(() => {
@@ -448,45 +617,29 @@
 
         // Event listeners for items per page dropdown
         $('.items-per-page').click(function () {
-            itemsPerPage = $(this).data('value');
-            localStorage.setItem('itemsPerPage', itemsPerPage);
-            currentPage = 1; // Reset to first page
+            setItemsPerPage($(this).data('value'));
             renderGames();
         });
 
         $('#applyCustomItemsPerPage').click(function () {
-            const customValue = $('#customItemsPerPage').val();
-            if (customValue && customValue > 0) {
-                itemsPerPage = parseInt(customValue);
-                localStorage.setItem('itemsPerPage', itemsPerPage);
-                currentPage = 1; // Reset to first page
+            const customValue = parseInt($('#customItemsPerPage').val());
+            if (customValue > 0) {
+                setItemsPerPage(customValue);
                 renderGames();
             }
         });
 
-        // Event listener for card size slider
+        // Event listener for tile size slider
         $('#cardSizeRange').on('input', function () {
             cardSize = parseInt($(this).val());
             localStorage.setItem('cardSize', cardSize);
-            if (currentView === 'icon') {
-                adjustIconSizes(cardSize);
-            } else {
-                adjustCardSizes(cardSize);
-            }
+            applyTileSize();
         });
 
         // Event listener for view buttons
         $('.view-toggle-btn').click(function () {
-            $('.view-toggle-btn').removeClass("active"); 
-            $(this).addClass("active");
-            const view = $(this).data('view');
-            localStorage.setItem('currentView', view)
-            if (view === 'card') {
-                currentView = 'card';
-            } else if (view === 'icon') {
-                currentView = 'icon';
-            }
-            renderGames(games);
+            setView($(this).data('view'));
+            renderGames();
         });
 
         // Handle type filter toggle buttons
@@ -558,7 +711,7 @@
         $(document).on('click', '.popover', function (e) {
             e.stopPropagation(); // Prevent the click event from bubbling up
         });
-    
+
     });
 
     // Store active filters
@@ -568,7 +721,6 @@
     let activeCompletionFilter = "";
 
     function updateFilter() {
-        // $('#filterDropdownBtn').toggle();
         if ($('#typeBase').is(":checked")) {
             activeTypeFilter = 'BASE';
         } else if ($('#typeDlc').is(":checked")) {
@@ -599,21 +751,6 @@
         }
     }
 
-    function findCommonElements(...arrays) {
-        // Filter out empty arrays
-        const nonEmptyArrays = arrays.filter(array => array.length > 0);
-
-        // If there are no non-empty arrays, return an empty array
-        if (nonEmptyArrays.length === 0) {
-            return [];
-        }
-
-        // Find common elements
-        return nonEmptyArrays.reduce((common, currentArray) => 
-            common.filter(item => currentArray.includes(item))
-        );
-    }
-
     // Function to apply filters and show/hide game cards with animation
     function applyFilters() {
         // Get current search term
@@ -635,6 +772,7 @@
 
         filteredGames = filtered;
         currentPage = 1;
+        updateFilterCount();
         renderGames();
     }
 
@@ -651,24 +789,24 @@
         );
     }
 
-    // $('#btnApplyFilters').on('click', function () {
-    //     updateFilter();
-    //     applyFilters();
-    // });
-
     // ---------------------------------------------------------- downloader
 
     let releaseSearchTarget = null;
     let releaseSearchResults = [];
 
-    function missingContentSearchButton(game) {
+    function missingContentSearchButton(group) {
         // What the search resolves to is decided server side, the browser only says
         // "this title is missing an update" or "this app is missing"
+        // ponytail: one search per title group (base or update). Missing DLCs are only
+        // counted by the DLC badge — give each DLC its own button if that becomes a need.
+        const base = group.base;
         let payload = null;
-        if (game.app_type === 'BASE' && game.has_latest_version === false) {
-            payload = {title_id: game.title_id};
-        } else if (game.owned === false && game.id) {
-            payload = {app_id: game.id};
+        if (!base) {
+            payload = null;
+        } else if (base.has_latest_version === false) {
+            payload = {title_id: base.title_id};
+        } else if (base.owned === false && base.id) {
+            payload = {app_id: base.id};
         }
         if (!payload) {
             return null;
