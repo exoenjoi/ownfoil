@@ -89,12 +89,66 @@ Worth re-reading before touching anything here.
   Never call it on a request path — that is why the shop cannot compute organized names on the fly.
 - Upstream still runs the **Flask development server** in production. Unfixed, noted.
 
+---
+
+## Upstream: what lands at 2.4.0
+
+Surveyed 2026-08-06. **Upstream develops on `develop`, not `master`.** `upstream/master` has not
+moved since `7ca28d5` (2026-03-25, our fork point) — it only advances at releases. `develop` is
+122 commits ahead, `+5768/-1401` over 51 files. So `git merge upstream/master` returns nothing for
+months, then a whole release at once. The quiet is an illusion, not a dead project.
+
+**Do not track `develop`.** The foundations it reworks are the exact ones both features hook into,
+and they are still moving. Porting onto them now means porting twice. Wait for 2.4.0 on `master`.
+
+**Cost, in order of attack. Start with the organizer** — it is what decides whether the merge is
+feasible at all; the rest is bookkeeping.
+
+| Area | Effort |
+|---|---|
+| `index.html`, downloader-only files, Alembic | **none.** `develop` does not touch `index.html` at all, so the UI rework merges clean. And the no-migration bet pays: we added zero revisions, so upstream's four new ones chain under `78c33e9bffce` with no second head |
+| `add_missing_apps_to_db()` (moved to `library.py`), deleted workflows | minutes — imports, modify/delete conflicts |
+| `app.py`, `settings.py` (191 lines changed), `settings.html` (240) | tedious, line-by-line |
+| titledb calls in the downloader | rewrite against the new API |
+| **hardlink organizer** | **full re-port**, see below |
+
+**The organizer was rewritten.** `process_library_organization()` no longer exists. Organizing lives
+in `organize_file()` (`library.py`), driven by `organize_library_task` / `organize_file_task` in the
+new task queue, and every row now carries `Files.organized`. Our hardlink patch is grafted onto a
+function that is gone — git will not hand us a conflict to arbitrate, the block simply vanished.
+Open question to settle then: what `organized` means when the source file never moves.
+
+**Keep NSZ compression off.** The headline feature of 2.4.0 (9 commits: compress, verify
+bit-identical, live progress, settings UI) rewrites files in place, and the pipeline chains
+organize → compress (`tasks.py`, *"organize_file re-triggers compression once placed"*). Our files
+must keep seeding — see the constraint at the top of this file. It is opt-in and off by default, so
+the real risk is enabling it out of curiosity later, having forgotten why not.
+
+**What we gain — more than bug fixes.** This release *simplifies* the fork:
+
+- **titledb moved into SQL (#318).** `get_game_info()` became a shim over a SQL lookup, and
+  `load_titledb()` / `unload_titledb()` are gone. Two notes above become obsolete, our defensive
+  `try/finally` around the leaking counter can be deleted, and the shop *can* compute organized
+  names on the fly after this.
+- **Task queue + Gunicorn.** Parallel scans, configurable workers, per-group concurrency caps,
+  stoppable tasks — and the Flask development server finally replaced.
+- **Six organizer fixes** in our exact area: duplicate renaming, duplicate handling, a regression,
+  filenames, multicontent removal, leftovers when deleting a library.
+- Upstream also fixed Sphaira twice, but for other causes (reverse-proxy client detection, and an
+  organizer bug). Our `folder` → `filepath` fix looks distinct and still needed — verify, don't assume.
+
+Irrelevant to us, all Docker-shaped concerns: pip/uv packaging, PyPI publish, Windows path limits,
+opening a browser at startup, LAN IP on the setup page.
+
 ## Operations
 
 - Image: `ghcr.io/exoenjoi/ownfoil:latest`, public, amd64 + arm64. Rebuilt by GitHub Actions on
   every push to `master` (`.github/workflows/docker.yml`, uses the built-in token, no secret).
 - Dropped two upstream-only workflows: the stale-issue bot, and the titledb build — the app pulls
   titledb from upstream's repo (`TITLEDB_ARTEFACTS_URL` in `constants.py`).
-- Sync with upstream: `git fetch upstream && git merge upstream/master`.
+- Sync with upstream: `git fetch upstream && git merge upstream/master`. Watch `upstream/develop`
+  for what is coming, but merge only `master` — see the 2.4.0 section above for why.
+- Merge `master` into `downloader` after every UI session. Both touch `app/templates/index.html`,
+  so the conflicts are structural: ten small ones beat one unreadable one.
 - Tests, no framework, no network: `python app/test_organizer.py`, `python app/test_downloader.py`
   (the latter on the `downloader` branch).
