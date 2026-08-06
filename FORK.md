@@ -91,6 +91,21 @@ Decisions:
   The manual search modal still lists refused releases with the reason, so a human can override.
 - **History lives in `config/downloads.json`**, not in a table. See the Alembic note below.
 - `completed` means the library identified the file, not that the torrent finished.
+- **Discover searches titledb, not the library.** A dedicated page finds any base game by name and
+  hands it to the same release modal, so a game you own nothing of is reachable. It scans the
+  titledb already resident in memory rather than building an index: `resolve_target` is decorated
+  `@with_titledb`, so every manual search already pays that load and the scan costs nothing extra.
+  Marked with a `ponytail:` comment naming the exit — upstream 2.4.0 moves titledb into SQL, which
+  turns the scan into a `LIKE` and deletes the question.
+- **`resolve_target(catalog=True)` skips the `Apps` table entirely.** The flag is explicit rather
+  than inferred from a missing row, so the library's own 🔍 keeps its exact behaviour: without it
+  nothing on that path changes.
+- **`rank_releases()` is only tuned for updates** — it rejects an update release with no version
+  marker because that is usually the base game. A base-game target passes unranked by that rule, so
+  Discover's ordering is rough. Tolerable because Discover never auto-grabs: the modal lists every
+  release with its rejection reason and the user picks.
+- The release modal lives in `templates/release_modal.html`, included by both the library and
+  Discover. `missingContentSearchButton()` stayed in `index.html` — it takes a library group object.
 
 ---
 
@@ -175,5 +190,5 @@ opening a browser at startup, LAN IP on the setup page.
   for what is coming, but merge only `master` — see the 2.4.0 section above for why.
 - Merge `master` into `downloader` after every UI session. Both touch `app/templates/index.html`,
   so the conflicts are structural: ten small ones beat one unreadable one.
-- Tests, no framework, no network: `python app/test_organizer.py`, `python app/test_downloader.py`
-  (the latter on the `downloader` branch).
+- Tests, no framework, no network: `python app/test_organizer.py`, `python app/test_titles.py`,
+  `python app/test_downloader.py` (the last one on the `downloader` branch).
