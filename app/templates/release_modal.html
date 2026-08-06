@@ -1,0 +1,110 @@
+<!-- Shared by the library and Discover: both open the same release list. -->
+<script>
+    let releaseSearchTarget = null;
+    let releaseSearchResults = [];
+
+    function escapeHtml(text) {
+        return $('<div>').text(text == null ? '' : text).html();
+    }
+
+    function humanSize(bytes) {
+        if (!bytes) return '';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0, value = bytes;
+        while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+        return `${value.toFixed(i ? 1 : 0)} ${units[i]}`;
+    }
+
+    function openReleaseSearch(payload) {
+        releaseSearchTarget = null;
+        releaseSearchResults = [];
+        $('#releaseSearchTitle').text('Searching...');
+        $('#releaseSearchBody').html('<div class="text-body-secondary">Asking Prowlarr...</div>');
+        new bootstrap.Modal('#releaseSearchModal').show();
+
+        $.ajax({
+            url: '/api/downloader/search', type: 'POST', contentType: 'application/json',
+            data: JSON.stringify(payload),
+            success: function (result) {
+                if (!result['success']) {
+                    const error = (result['errors'] || [{}])[0]['error'] || 'Search failed.';
+                    $('#releaseSearchTitle').text('Search');
+                    $('#releaseSearchBody').html(`<div class="alert alert-warning">${escapeHtml(error)}</div>`);
+                    return;
+                }
+                releaseSearchTarget = result['target'];
+                releaseSearchResults = result['releases'] || [];
+                renderReleaseSearch();
+            },
+            error: function () {
+                $('#releaseSearchBody').html('<div class="alert alert-danger">Search request failed.</div>');
+            }
+        });
+    }
+
+    function renderReleaseSearch() {
+        const target = releaseSearchTarget;
+        $('#releaseSearchTitle').text(`${target.name} — ${target.app_type} v${target.app_version}`);
+        if (!releaseSearchResults.length) {
+            $('#releaseSearchBody').html(
+                '<div class="alert alert-warning">Prowlarr returned no result for this search.</div>');
+            return;
+        }
+        const rows = releaseSearchResults.map((release, index) => {
+            const rejected = release.rejected;
+            return `<tr class="${rejected ? 'opacity-50' : ''}">
+                <td class="small">${escapeHtml(release.title)}
+                    ${rejected ? `<div class="text-warning">${escapeHtml(rejected)}</div>` : ''}</td>
+                <td class="small text-nowrap">${escapeHtml(release.indexer)}</td>
+                <td class="small text-nowrap">${humanSize(release.size)}</td>
+                <td class="small text-nowrap">${release.seeders} / ${release.leechers}</td>
+                <td class="text-end"><button class="btn btn-sm ${rejected ? 'btn-outline-secondary' : 'btn-primary'}"
+                    onClick="grabRelease(${index}, this)">Grab</button></td>
+            </tr>`;
+        });
+        $('#releaseSearchBody').html(`
+            <p class="text-body-secondary small">Greyed out releases are the ones the automatic job would refuse,
+            with the reason. You can still grab them.</p>
+            <div class="table-responsive"><table class="table table-sm table-hover align-middle">
+                <thead><tr><th>Release</th><th>Indexer</th><th>Size</th><th>S/L</th><th></th></tr></thead>
+                <tbody>${rows.join('')}</tbody>
+            </table></div>`);
+    }
+
+    function grabRelease(index, button) {
+        $(button).prop('disabled', true).text('...');
+        $.ajax({
+            url: '/api/downloader/grab', type: 'POST', contentType: 'application/json',
+            data: JSON.stringify({target: releaseSearchTarget, release: releaseSearchResults[index]}),
+            success: function (result) {
+                if (result['success']) {
+                    $(button).removeClass('btn-primary btn-outline-secondary')
+                        .addClass('btn-success').text('Grabbed');
+                } else {
+                    const error = (result['errors'] || [{}])[0]['error'] || 'Grab failed.';
+                    $(button).removeClass('btn-primary').addClass('btn-danger').text('Failed')
+                        .attr('title', error);
+                }
+            },
+            error: function () {
+                $(button).removeClass('btn-primary').addClass('btn-danger').text('Failed');
+            }
+        });
+    }
+</script>
+
+<div class="modal fade" id="releaseSearchModal" tabindex="-1" aria-labelledby="releaseSearchTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="releaseSearchTitle">Search</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="releaseSearchBody"></div>
+            <div class="modal-footer">
+                <a href="/downloads" class="btn btn-outline-secondary">Downloads</a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
