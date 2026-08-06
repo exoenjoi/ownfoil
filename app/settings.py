@@ -281,3 +281,21 @@ def set_scheduler_settings(data):
     with settings_lock:
         with open(CONFIG_FILE, 'w') as yaml_file:
             yaml.dump(settings, yaml_file)
+
+# Secrets are blanked out by GET /api/settings, so an empty value means "keep the
+# stored one" instead of "erase it"
+DOWNLOADER_SECRETS = (('prowlarr', 'api_key'), ('qbittorrent', 'password'))
+
+def set_downloader_settings(data):
+    settings = load_settings()
+    for section, key in DOWNLOADER_SECRETS:
+        if not (data.get(section, {}).get(key) or '').strip():
+            data.get(section, {}).pop(key, None)
+    for section, section_data in data.items():
+        if isinstance(section_data, dict):
+            settings['downloader'].setdefault(section, {}).update(section_data)
+        else:
+            settings['downloader'][section] = section_data
+    with settings_lock:
+        with open(CONFIG_FILE, 'w') as yaml_file:
+            yaml.dump(settings, yaml_file)

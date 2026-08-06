@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+{% include 'nav.html' %}
+
+<div class="container-fluid">
+    <div class="container mt-3">
+        <div class="d-flex align-items-center justify-content-between pb-2">
+            <h2 class="mb-0">Downloads</h2>
+            <div>
+                <button type="button" id="runDownloaderBtn" class="btn btn-primary" onClick="runDownloader()">Run now</button>
+                <button type="button" class="btn btn-outline-secondary" onClick="refreshDownloads()">Refresh</button>
+            </div>
+        </div>
+        <p class="text-body-secondary">Grabs are handed to Prowlarr, which passes them to its own download client. An
+            entry becomes <code>completed</code> once the file has landed in your library and been identified.</p>
+
+        <div id="downloadsAlert"></div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Game</th>
+                        <th>Release</th>
+                        <th>Indexer</th>
+                        <th>Status</th>
+                        <th>Progress</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="downloadsTableBody">
+                    <tr><td colspan="6" class="text-body-secondary">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const STATUS_BADGE = {
+        grabbed: 'text-bg-secondary',
+        downloading: 'text-bg-primary',
+        completed: 'text-bg-success',
+        failed: 'text-bg-danger'
+    };
+
+    function humanSize(bytes) {
+        if (!bytes) return '';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0, value = bytes;
+        while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+        return `${value.toFixed(i ? 1 : 0)} ${units[i]}`;
+    }
+
+    function escapeHtml(text) {
+        return $('<div>').text(text == null ? '' : text).html();
+    }
+
+    function renderDownloads(downloads) {
+        if (!downloads.length) {
+            $('#downloadsTableBody').html(
+                '<tr><td colspan="6" class="text-body-secondary">Nothing grabbed yet.</td></tr>');
+            return;
+        }
+        const rows = downloads.slice().reverse().map(d => {
+            const badge = STATUS_BADGE[d.status] || 'text-bg-secondary';
+            const progress = d.progress === null || d.progress === undefined ? '' :
+                `<div class="progress" style="min-width: 6rem;" role="progressbar">
+                     <div class="progress-bar" style="width: ${d.progress}%">${d.progress}%</div>
+                 </div>`;
+            const version = d.app_type === 'UPDATE' ? ` <span class="text-body-secondary">v${escapeHtml(d.app_version)}</span>` : '';
+            const error = d.error ? `<div class="small text-danger">${escapeHtml(d.error)}</div>` : '';
+            return `<tr>
+                <td>${escapeHtml(d.name)}${version}<div class="small text-body-secondary">${escapeHtml(d.app_id)}</div></td>
+                <td class="small">${escapeHtml(d.release_title) || '<span class="text-body-secondary">no release</span>'}
+                    <div class="text-body-secondary">${humanSize(d.size)}${d.seeders ? ' · ' + d.seeders + ' seeders' : ''}</div></td>
+                <td class="small">${escapeHtml(d.indexer)}</td>
+                <td><span class="badge ${badge}">${escapeHtml(d.status)}</span>${error}</td>
+                <td>${progress}</td>
+                <td class="text-end"><button class="btn btn-sm btn-outline-danger" onClick="deleteDownload(${d.id})"
+                    title="Remove from history"><i class="bi bi-trash"></i></button></td>
+            </tr>`;
+        });
+        $('#downloadsTableBody').html(rows.join(''));
+    }
+
+    function refreshDownloads() {
+        $.getJSON('/api/downloader/status', function (result) {
+            renderDownloads(result['downloads'] || []);
+        }).fail(function () {
+            $('#downloadsAlert').html('<div class="alert alert-danger">Could not load the download list.</div>');
+        });
+    }
+
+    function runDownloader() {
+        $('#runDownloaderBtn').prop('disabled', true);
+        $.ajax({
+            url: '/api/downloader/run', type: 'POST', contentType: 'application/json',
+            success: function (result) {
+                if (result['success']) {
+                    $('#downloadsAlert').html(
+                        '<div class="alert alert-info">Downloader started, the list refreshes on its own.</div>');
+                } else {
+                    const error = (result['errors'] || [{}])[0]['error'] || 'Could not start the downloader.';
+                    $('#downloadsAlert').html(`<div class="alert alert-warning">${escapeHtml(error)}</div>`);
+                }
+                $('#runDownloaderBtn').prop('disabled', false);
+            }
+        });
+    }
+
+    function deleteDownload(id) {
+        $.ajax({url: `/api/downloader/${id}`, type: 'DELETE', success: refreshDownloads});
+    }
+
+    $(document).ready(function () {
+        refreshDownloads();
+        setInterval(refreshDownloads, 10000);
+    });
+</script>
+
+{% endblock %}

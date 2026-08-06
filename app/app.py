@@ -20,6 +20,10 @@ from utils import *
 from library import *
 import titledb
 import os
+import downloader as downloader_lib
+import downloads_store
+import prowlarr
+import qbittorrent
 from clients import CyberFoilClient, TinfoilClient, SphairaClient
 
 def init():
@@ -45,6 +49,8 @@ def init():
     init_scheduler(app)
     scan_interval_str = app_settings.get('scheduler', {}).get('scan_interval', '12h')
     schedule_update_and_scan_job(app, scan_interval_str, run_first=True, run_once=True)
+    download_interval_str = app_settings.get('scheduler', {}).get('download_interval', '6h')
+    schedule_downloader_job(app, download_interval_str, run_first=False)
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -267,6 +273,12 @@ def setup_page():
         admin_account_created=admin_account_created()
     )
 
+@app.route('/downloads')
+@access_required('admin')
+def downloads_page():
+    return render_template('downloads.html', title='Downloads',
+                           admin_account_created=admin_account_created())
+
 @app.get('/api/settings')
 @access_required('admin')
 def get_settings_api():
@@ -278,6 +290,12 @@ def get_settings_api():
             if 'hauth' in client_settings:
                 # Replace hauth dict with empty dict to keep it private
                 settings['shop']['clients'][client_name]['hauth'] = {}
+    # Same for the downloader secrets, with a flag so the UI can show they are set
+    for section, key in DOWNLOADER_SECRETS:
+        section_settings = settings.get('downloader', {}).get(section)
+        if section_settings is not None and key in section_settings:
+            section_settings[f'{key}_set'] = bool(section_settings[key])
+            section_settings[key] = ''
     return jsonify(settings)
 
 @app.post('/api/settings/titles')
@@ -401,6 +419,114 @@ def set_scheduler_settings_api():
             })
 
     return jsonify({'success': True, 'errors': []})
+
+@app.post('/api/settings/downloader')
+@access_required('admin')
+def set_downloader_settings_api():
+    data = request.json or {}
+    download_interval_str = data.pop('download_interval', None)
+
+    if download_interval_str is not None:
+        is_valid, error_msg = validate_interval_string(download_interval_str)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'errors': [{'path': 'scheduler/download_interval', 'error': error_msg}]
+            })
+
+    prowlarr_url = (data.get('prowlarr', {}).get('url') or '').strip()
+    if data.get('enabled') and not prowlarr_url:
+        return jsonify({
+            'success': False,
+            'errors': [{'path': 'downloader/prowlarr/url',
+                        'error': 'A Prowlarr URL is required to enable the downloader.'}]
+        })
+
+    set_downloader_settings(data)
+    if download_interval_str is not None:
+        set_scheduler_settings({'download_interval': download_interval_str})
+    reload_conf()
+
+    try:
+        schedule_downloader_job(app, app_settings['scheduler'].get('download_interval', '6h'),
+                                run_first=False)
+    except Exception as e:
+        logger.error(f"Error updating downloader scheduler: {e}")
+        return jsonify({'success': False, 'errors': [{'path': 'downloader', 'error': str(e)}]})
+
+    return jsonify({'success': True, 'errors': []})
+
+@app.post('/api/downloader/test')
+@access_required('admin')
+def test_downloader_api():
+    reload_conf()
+    downloader_settings = app_settings.get('downloader', {}) or {}
+    prowlarr_ok, prowlarr_msg = prowlarr.test_connection(downloader_settings.get('prowlarr', {}) or {})
+    qbt_ok, qbt_msg = qbittorrent.test_connection(downloader_settings.get('qbittorrent', {}) or {})
+    return jsonify({
+        'prowlarr': {'success': prowlarr_ok, 'message': prowlarr_msg},
+        'qbittorrent': {'success': qbt_ok, 'message': qbt_msg},
+    })
+
+@app.post('/api/downloader/run')
+@access_required('admin')
+def run_downloader_api():
+    reload_conf()
+    if not downloader_lib.is_configured(app_settings):
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'Downloader is not enabled or not configured.'}]})
+    threading.Thread(target=downloader_job, daemon=True).start()
+    return jsonify({'success': True, 'errors': []})
+
+@app.get('/api/downloader/status')
+@access_required('admin')
+def downloader_status_api():
+    reload_conf()
+    return jsonify({'downloads': downloader_lib.sync_status(app_settings)})
+
+@app.post('/api/downloader/search')
+@access_required('admin')
+def search_downloader_api():
+    data = request.json or {}
+    reload_conf()
+    try:
+        target = downloader_lib.resolve_target(data.get('app_id'), data.get('app_version'),
+                                               data.get('title_id'))
+    except FileNotFoundError:
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'TitleDB is not available yet, scan the library first.'}]})
+    if target is None:
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'Unknown app, or no title info for it.'}]})
+    return jsonify({
+        'success': True,
+        'errors': [],
+        'target': target,
+        'releases': downloader_lib.search_releases(target, app_settings),
+    })
+
+@app.post('/api/downloader/grab')
+@access_required('admin')
+def grab_downloader_api():
+    data = request.json or {}
+    reload_conf()
+    # The target comes straight back from the search, so the grab records exactly what
+    # the user was shown rather than re-resolving to a possibly different app
+    target = data.get('target') or {}
+    release = data.get('release') or {}
+    if not target.get('app_id') or not release.get('guid'):
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'Missing target or invalid release.'}]})
+    success, error = downloader_lib.grab_release(target, release, app_settings)
+    return jsonify({
+        'success': success,
+        'errors': [] if success else [{'path': 'downloader', 'error': error}]
+    })
+
+@app.delete('/api/downloader/<int:download_id>')
+@access_required('admin')
+def delete_download_api(download_id):
+    return jsonify({'success': downloads_store.delete(download_id), 'errors': []})
 
 @app.post('/api/upload')
 @access_required('admin')
@@ -582,6 +708,20 @@ def schedule_update_and_scan_job(app: Flask, interval_str: str, run_first: bool 
         func=update_and_scan_job,
         run_first=run_first,
         run_once=run_once
+    )
+
+def downloader_job():
+    """Search and grab the updates missing from the library."""
+    with app.app_context():
+        downloader_lib.run_job()
+
+def schedule_downloader_job(app: Flask, interval_str: str, run_first: bool = False):
+    """Schedule or update the downloader job, an interval of '0' disables it"""
+    app.scheduler.update_job_interval(
+        job_id='downloader',
+        interval_str=interval_str,
+        func=downloader_job,
+        run_first=run_first
     )
 
 

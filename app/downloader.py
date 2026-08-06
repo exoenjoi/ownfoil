@@ -1,0 +1,365 @@
+"""Find the content missing from the library and grab it through Prowlarr.
+
+Prowlarr hands the release to its own download client, so nothing here writes to
+qBittorrent: it is only read to report progress.
+"""
+import logging
+import re
+
+import downloads_store as store
+import prowlarr
+import qbittorrent
+import titles as titles_lib
+from constants import APP_TYPE_DLC, APP_TYPE_UPD
+from db import Apps, Titles, is_app_owned
+from settings import load_settings
+
+logger = logging.getLogger('main')
+
+SWITCH_EXTS = ('nsz', 'nsp', 'xcz', 'xci')
+
+
+def _norm(value):
+    return re.sub(r'[^a-z0-9]', '', (value or '').lower())
+
+
+def _ext_of(release_title):
+    match = re.search(r'\b(nsp|nsz|xci|xcz)\b', (release_title or '').lower())
+    return match.group(1) if match else None
+
+
+def _has_token(release_title, number):
+    """True if the number appears as a standalone token, optionally prefixed by v."""
+    return re.search(rf'\bv?0*{number}\b', (release_title or '').lower()) is not None
+
+
+# ---------------------------------------------------------------- ranking (pure)
+
+def rank_releases(releases, target, filters):
+    """Annotate every release with a score and a rejection reason, best first.
+
+    Returning the rejected ones too is what lets the UI show the whole list with the
+    reason, so a human can override a rejection the automatic job would never take.
+    """
+    preferred = [e.lower() for e in (filters.get('preferred_ext') or SWITCH_EXTS)]
+    pref_rank = {ext: len(preferred) - i for i, ext in enumerate(preferred)}
+    min_seeders = int(filters.get('min_seeders') or 0)
+    try:
+        max_size_gb = float(filters.get('max_size_gb') or 0)
+    except (TypeError, ValueError):
+        max_size_gb = 0
+
+    name_norm = _norm(target.get('name'))
+    app_id_norm = _norm(target.get('app_id'))
+    title_id_norm = _norm(target.get('title_id'))
+    version = str(target.get('app_version') or '')
+    patch_level = target.get('patch_level')
+
+    ranked = []
+    for release in releases:
+        release = dict(release)
+        title = release.get('title') or ''
+        title_norm = _norm(title)
+        seeders = int(release.get('seeders') or 0)
+        size = int(release.get('size') or 0)
+        ext = _ext_of(title)
+
+        has_version = bool(version) and _has_token(title, version)
+        has_patch_level = patch_level is not None and _has_token(title, patch_level)
+        has_app_id = bool(app_id_norm) and app_id_norm in title_norm
+        has_title_id = bool(title_id_norm) and title_id_norm in title_norm
+
+        if ext is None:
+            reason = 'No Switch file extension in the release name.'
+        elif ext not in pref_rank:
+            reason = f'Extension {ext} is not in the preferred list.'
+        elif not (name_norm and name_norm in title_norm) and not has_app_id:
+            reason = 'Release name matches neither the game name nor its app id.'
+        elif seeders < min_seeders:
+            reason = f'Only {seeders} seeder(s), minimum is {min_seeders}.'
+        elif max_size_gb and size > max_size_gb * 1024 ** 3:
+            reason = f'Bigger than the {max_size_gb} GB limit.'
+        elif size and size < 1024 * 1024:
+            reason = 'Suspiciously small (under 1 MB).'
+        elif target.get('app_type') == APP_TYPE_UPD and not (has_version or has_patch_level or has_app_id):
+            # Without a version marker an "update" release is most likely the base game
+            reason = 'No version marker in the release name, cannot tell which update it is.'
+        else:
+            reason = None
+
+        # Only how well the release identifies the content scores. Seeders are a
+        # tiebreaker below: a popular release of the wrong version is still the wrong one.
+        score = 0
+        if has_version:
+            score += 100
+        elif has_patch_level:
+            score += 50
+        if has_app_id:
+            score += 30
+        if has_title_id:
+            score += 20
+        score += pref_rank.get(ext, 0)
+
+        release['score'] = score
+        release['rejected'] = reason
+        ranked.append(release)
+
+    ranked.sort(key=lambda r: (r['rejected'] is not None, -r['score'], -int(r.get('seeders') or 0)))
+    return ranked
+
+
+def best_release(ranked):
+    """Pick the best release the automatic job is allowed to grab."""
+    for release in ranked:
+        if not release['rejected']:
+            return release, None
+    if not ranked:
+        return None, 'No results from Prowlarr.'
+    return None, ranked[0]['rejected']
+
+
+# ---------------------------------------------------------------- targets (DB + titledb)
+
+def _target(app, title_id, name):
+    version = str(app.app_version)
+    return {
+        'title_id': title_id,
+        'app_id': app.app_id,
+        'app_version': version,
+        'app_type': app.app_type,
+        'name': name,
+        'patch_level': titles_lib.get_update_number(version) if version.isdigit() else None,
+    }
+
+
+def _game_name(title_id):
+    info = titles_lib.get_game_info(title_id) or {}
+    name = info.get('name')
+    return None if name in (None, 'Unrecognized') else name
+
+
+def with_titledb(func):
+    """load_titledb() only increments the counter, the caller must decrement it.
+
+    The load is inside the try because it increments the counter before opening the
+    files: if the titledb is missing, the counter would leak and nothing would ever
+    be unloaded again.
+    """
+    def wrapper(*args, **kwargs):
+        try:
+            titles_lib.load_titledb()
+            return func(*args, **kwargs)
+        finally:
+            titles_lib.identification_in_progress_count -= 1
+            titles_lib.unload_titledb()
+    return wrapper
+
+
+@with_titledb
+def missing_updates():
+    """Latest missing update of every game whose base game we actually own.
+
+    Missing content is already materialized by add_missing_apps_to_db(): every update
+    and DLC known to titledb exists as an Apps row with owned=False.
+    """
+    latest = {}
+    query = (Apps.query.join(Titles)
+             .filter(Apps.owned.is_(False), Apps.app_type == APP_TYPE_UPD,
+                     Titles.have_base.is_(True)))
+    for app in query.all():
+        title_id = app.title.title_id
+        current = latest.get(title_id)
+        if current is None or int(app.app_version or 0) > int(current.app_version or 0):
+            latest[title_id] = app
+
+    targets = []
+    for title_id, app in latest.items():
+        name = _game_name(title_id)
+        if not name:
+            logger.debug(f'Skipping {app.app_id}: no title info for {title_id}.')
+            continue
+        targets.append(_target(app, title_id, name))
+    return targets
+
+
+def _latest(apps):
+    return max(apps, key=lambda a: int(a.app_version or 0)) if apps else None
+
+
+@with_titledb
+def resolve_target(app_id=None, app_version=None, title_id=None):
+    """Target of a manual search from the UI.
+
+    Accepts an exact app, an app id whose latest missing version is picked, or a title id
+    whose latest missing update is picked. Resolving here rather than in the browser keeps
+    the app id arithmetic (base id -> update id) in one place.
+    """
+    if app_id and app_version:
+        app = Apps.query.filter_by(app_id=app_id, app_version=str(app_version)).first()
+    elif app_id:
+        app = _latest(Apps.query.filter_by(app_id=app_id, owned=False).all())
+    elif title_id:
+        app = _latest(Apps.query.join(Titles)
+                      .filter(Titles.title_id == title_id, Apps.owned.is_(False),
+                              Apps.app_type == APP_TYPE_UPD).all())
+    else:
+        return None
+    if app is None:
+        return None
+
+    resolved_title_id = app.title.title_id
+    # A DLC carries its own name, an update is named after its base game
+    name = (_game_name(app.app_id) if app.app_type == APP_TYPE_DLC else None) \
+        or _game_name(resolved_title_id)
+    if not name:
+        return None
+    return _target(app, resolved_title_id, name)
+
+
+# ---------------------------------------------------------------- search & grab
+
+def search_releases(target, settings):
+    """Search Prowlarr for a target, by game name then by app id, ranked."""
+    downloader_settings = settings.get('downloader', {})
+    prowlarr_settings = downloader_settings.get('prowlarr', {}) or {}
+    filters = downloader_settings.get('filters', {}) or {}
+    categories = prowlarr_settings.get('categories') or []
+
+    # Search by name: an app id almost never appears in a release name
+    results = prowlarr.search(prowlarr_settings, target.get('name'), categories)
+    ranked = rank_releases(results, target, filters)
+    if any(not r['rejected'] for r in ranked):
+        return ranked
+
+    # Nothing usable, retry with the app id for scene releases named with it
+    by_id = prowlarr.search(prowlarr_settings, target.get('app_id'), categories)
+    seen = {r['guid'] for r in results}
+    extra = [r for r in by_id if r['guid'] not in seen]
+    return rank_releases(results + extra, target, filters) if extra else ranked
+
+
+def grab_release(target, release, settings):
+    """Send a release to Prowlarr and record it in the history."""
+    prowlarr_settings = settings.get('downloader', {}).get('prowlarr', {}) or {}
+    common = {
+        'title_id': target.get('title_id'),
+        'app_id': target.get('app_id'),
+        'app_version': target.get('app_version'),
+        'app_type': target.get('app_type'),
+        'name': target.get('name'),
+        'release_title': release.get('title'),
+        'indexer': release.get('indexer'),
+        'size': release.get('size'),
+        'seeders': release.get('seeders'),
+        'torrent_hash': release.get('info_hash') or '',
+    }
+    ok, error = prowlarr.grab(prowlarr_settings, release)
+    if not ok:
+        store.add(status=store.STATUS_FAILED, error=error, **common)
+        logger.error(f"[downloader] Grab failed for {target.get('name')}: {error}")
+        return False, error
+    store.add(status=store.STATUS_GRABBED, error=None, **common)
+    logger.info(f"[downloader] Grabbed {release.get('title')} for {target.get('name')}")
+    return True, None
+
+
+def grab_target(target, settings):
+    ranked = search_releases(target, settings)
+    release, reason = best_release(ranked)
+    if release is None:
+        store.add(status=store.STATUS_FAILED, error=reason, title_id=target.get('title_id'),
+                  app_id=target.get('app_id'), app_version=target.get('app_version'),
+                  app_type=target.get('app_type'), name=target.get('name'))
+        logger.info(f"[downloader] No match for {target.get('name')}: {reason}")
+        return False
+    ok, _ = grab_release(target, release, settings)
+    return ok
+
+
+# ---------------------------------------------------------------- status
+
+def sync_status(settings):
+    """Refresh pending entries and return the whole history with live progress."""
+    downloads = store.all()
+    pending = [d for d in downloads
+               if d.get('status') in (store.STATUS_GRABBED, store.STATUS_DOWNLOADING)]
+
+    torrents = {}
+    qbt_settings = settings.get('downloader', {}).get('qbittorrent', {}) or {}
+    if pending and (qbt_settings.get('url') or '').strip():
+        client = qbittorrent.QbtClient(qbt_settings)
+        ok, error = client.login()
+        if ok:
+            torrents = client.torrents()
+        else:
+            logger.warning(f'[downloader] qBittorrent unavailable: {error}')
+
+    by_name = {(t.get('name') or '').strip().lower(): t for t in torrents.values()}
+
+    for download in pending:
+        # The library is the source of truth: the file arrived and was identified
+        if is_app_owned(download['app_id'], download['app_version']):
+            store.update(download['id'], status=store.STATUS_COMPLETED, error=None)
+            continue
+        torrent = torrents.get((download.get('torrent_hash') or '').lower())
+        if torrent is None:
+            torrent = by_name.get((download.get('release_title') or '').strip().lower())
+            if torrent and torrent.get('hash'):
+                store.update(download['id'], torrent_hash=torrent['hash'].lower())
+        if torrent is None:
+            continue
+        state = torrent.get('state') or ''
+        if state in qbittorrent.ERROR_STATES:
+            store.update(download['id'], status=store.STATUS_FAILED,
+                         error=f'qBittorrent state: {state}')
+        elif download['status'] != store.STATUS_DOWNLOADING:
+            store.update(download['id'], status=store.STATUS_DOWNLOADING, error=None)
+
+    # Re-read to pick up the updates, then attach the live progress
+    result = []
+    for download in store.all():
+        torrent = torrents.get((download.get('torrent_hash') or '').lower())
+        result.append({
+            **download,
+            'progress': round((torrent.get('progress') or 0) * 100, 1) if torrent else None,
+            'dlspeed': torrent.get('dlspeed') if torrent else None,
+            'eta': torrent.get('eta') if torrent else None,
+            'state': torrent.get('state') if torrent else None,
+        })
+    return result
+
+
+# ---------------------------------------------------------------- job
+
+def is_configured(settings):
+    downloader_settings = settings.get('downloader', {}) or {}
+    prowlarr_settings = downloader_settings.get('prowlarr', {}) or {}
+    return bool(downloader_settings.get('enabled')
+                and prowlarr_settings.get('url') and prowlarr_settings.get('api_key'))
+
+
+def run_job():
+    settings = load_settings()
+    if not is_configured(settings):
+        logger.info('Downloader not enabled or not configured, skipping.')
+        return
+    logger.info('Starting downloader job...')
+    try:
+        sync_status(settings)
+        max_per_run = int(settings['downloader'].get('filters', {}).get('max_per_run') or 0)
+
+        targets = [t for t in missing_updates()
+                   if (store.get(t['app_id'], t['app_version']) or {}).get('status')
+                   not in store.ACTIVE_STATUSES]
+        # Never tried first, so a target that keeps finding nothing does not eat every
+        # slot of max_per_run run after run
+        targets.sort(key=lambda t: store.get(t['app_id'], t['app_version']) is not None)
+        logger.info(f'Downloader: {len(targets)} missing update(s).')
+        if max_per_run:
+            targets = targets[:max_per_run]
+
+        grabbed = sum(1 for target in targets if grab_target(target, settings))
+        sync_status(settings)
+        logger.info(f'Downloader job done, grabbed {grabbed} torrent(s).')
+    except Exception as e:
+        logger.error(f'Downloader job failed: {e}')

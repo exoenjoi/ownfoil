@@ -26,6 +26,11 @@
 > watched, so each game stays a single entry in the shop and is identified only once. The shop
 > publishes the organized names while downloads keep serving the same file.
 >
+> It also adds an [auto-downloader](#auto-downloader): Ownfoil already knows which updates and DLCs
+> your library is missing, so it can search them through Prowlarr and hand the release to Prowlarr's
+> own download client. Combined with the hardlink mode, the whole chain closes on itself: grab,
+> seed, hardlink into a clean library.
+>
 > See [Organizer destination (hardlink mode)](#organizer-destination-hardlink-mode) for setup, and
 > [`ghcr.io/exoenjoi/ownfoil`](https://github.com/exoenjoi/ownfoil/pkgs/container/ownfoil) for the
 > image built from this fork.
@@ -223,6 +228,46 @@ Then, in `Settings`:
 `/games/organized` now holds the templated tree, and `/games/torrents` is untouched and still
 seeding. Check it with `ls -li`: a source and its link share the same inode number and a link
 count of 2.
+
+## Auto-downloader
+
+Ownfoil already knows what your library is missing: every update and DLC that exists upstream but
+has no file is listed as missing content. The downloader turns that list into actual downloads,
+through [Prowlarr](https://prowlarr.com/).
+
+Prowlarr does the grabbing itself: Ownfoil sends it a release, Prowlarr passes it to *its own*
+download client. So **Prowlarr must have a download client configured** (Settings > Download
+Clients). Ownfoil never adds or removes a torrent.
+
+Configure it in `Settings` under `Downloader`:
+
+| Field | Notes |
+| --- | --- |
+| Prowlarr URL / API key | The key is in Prowlarr under Settings > General. `Test connection` checks it. |
+| Categories | Optional Newznab category ids. There is no standard category for the Switch, so this is empty by default and every indexer is searched. |
+| qBittorrent URL / credentials | Optional, **read only**, used to show download progress on the `Downloads` page. |
+| Minimum seeders / Maximum size | Releases outside these bounds are never grabbed. |
+| Maximum grabs per run | The safety net. On a large library the first run could otherwise queue hundreds of torrents. |
+| Preferred extensions | Best first. A release whose extension is not listed is never grabbed. |
+| Run interval | `0` disables the automatic job while keeping manual searches. |
+
+**The automatic job only grabs updates**, and only the latest missing one of each game whose base
+game you own. DLCs are searched manually: on a game with missing content, the
+<kbd>🔍</kbd> badge opens a list of releases with a `Grab` button on each.
+
+That list is also the best way to judge the matching before enabling anything: releases the
+automatic job would refuse are greyed out with the reason. Most refusals are the important one —
+an update release that carries no version marker in its name, which is usually the base game.
+
+> [!TIP]
+> Point your download client's save path at the directory you configured as an Ownfoil library. With
+> a hardlink [destination folder](#organizer-destination-hardlink-mode), the chain closes on itself:
+> Prowlarr grabs, qBittorrent downloads into the library and keeps seeding, and the organizer
+> hardlinks a properly named copy into your clean library.
+
+A download is marked `completed` when the file has landed in your library and been identified, not
+when the torrent finishes: the library is the source of truth. The history lives in
+`config/downloads.json`.
 
 ## Titles configuration
 In the `Settings` page under the `Titles` section is where you specify the language of your Shop (currently the same for all users).

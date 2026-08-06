@@ -67,6 +67,29 @@ DEFAULT_SETTINGS = {
     },
     "scheduler": {
         "scan_interval": "12h",
+        "download_interval": "6h",
+    },
+    "downloader": {
+        "enabled": False,
+        "prowlarr": {
+            "url": "",
+            "api_key": "",
+            # No standard Newznab category exists for the Switch, so no filter by default:
+            # filtering would silently return nothing on most indexers
+            "categories": [],
+        },
+        "qbittorrent": {
+            # Optional, read only: Prowlarr adds the torrents, this is just for progress
+            "url": "",
+            "username": "",
+            "password": "",
+        },
+        "filters": {
+            "min_seeders": 3,
+            "preferred_ext": ["nsz", "nsp", "xcz", "xci"],
+            "max_size_gb": 0,
+            "max_per_run": 10,
+        },
     }
 }
 
