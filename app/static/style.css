@@ -76,11 +76,6 @@
     background-color: var(--bs-dark-bg-subtle);
 }
 
-/* A full-width amber rectangle shouts; on a row the left edge is enough. */
-.library-row.is-incomplete::after {
-    box-shadow: inset 3px 0 0 0 rgba(var(--bs-warning-rgb), .85);
-}
-
 .library-row-icon {
     width: 40px;
     height: 40px;

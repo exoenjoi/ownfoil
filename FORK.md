@@ -39,6 +39,24 @@ Consequences, all deliberate:
 - Fixed a pre-existing bug on the way: Sphaira served files from `Files.folder`, which becomes
   library-relative once a file is organized. It now serves from `Files.filepath`.
 
+## Also on `master`: merged NSPs were only half identified
+
+An upstream bug, found from a library reporting `Base missing` on a game whose base was sitting
+right there inside the NSP. `get_cnmts()` walked every NCA of an **Xci** but called
+`Nsp.cnmt()` for an **Nsp** — and that helper returns the *first* `.cnmt.nca` and stops
+(`nsz/Fs/Nsp.py:220`). A merged base+update NSP therefore registered one content only: the base
+stayed `owned=False`, `nb_content` stayed 1, so `multicontent` stayed false and the organizer named
+the file with the `update` template. That name is the trap — base and update templates are identical
+in `DEFAULT_SETTINGS`, so the file reads as a base game and only one hex digit of the app id
+(`…2000` vs `…2800`) says otherwise. Same bug hit an `Incl.All.Dlcs` NSP: base owned, every DLC not.
+
+Fixed by walking the whole container, mirroring the Xci branch. Covered by `app/test_titles.py`.
+
+**Re-identification is not automatic.** `get_files_to_identify()` only returns rows with
+`identified=False`, so files identified before the fix keep their half-truth. Remove and re-add the
+library path in the settings to force a full pass — `delete_files_by_library()` drops database rows
+only, it never touches the filesystem.
+
 ## On the `downloader` branch (not merged): auto-downloader
 
 Grabs the updates missing from the library through **Prowlarr**. Inspired by

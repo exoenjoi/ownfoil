@@ -211,10 +211,11 @@ def identify_file_from_filename(filename):
 def get_cnmts(container):
     cnmts = []
     if isinstance(container, Nsp.Nsp):
-        try:
-            cnmt = container.cnmt()
-            cnmts.append(cnmt)
-        except Exception as e:
+        # One CNMT per content, so a merged base+update NSP holds several. Nsp.cnmt()
+        # returns the first one and stops, which left the other contents unowned in the
+        # library. Walk the whole container, like the Xci branch below already does.
+        cnmts = [f for f in container if f._path.endswith('.cnmt.nca')]
+        if not cnmts:
             logger.warning('CNMT section not found in Nsp.')
 
     elif isinstance(container, Xci.Xci):
