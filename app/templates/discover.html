@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+
+{% block content %}
+{% include 'nav.html' %}
+<div class="container-fluid mt-3">
+
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-8">
+            <input type="search" id="catalogQuery" class="form-control form-control-lg"
+                placeholder="Search any Switch game by name..." autofocus>
+            <div id="catalogStatus" class="text-body-secondary small mt-2"></div>
+        </div>
+    </div>
+
+    <!-- .library-grid is the library's own layout class: auto-fill columns sized by
+         --tile, which falls back to 220px without the library's size slider. -->
+    <div id="catalogGrid" class="library-grid mt-3"></div>
+</div>
+
+<script>
+    // The catalog is titledb, not the library: a result is a game that exists, owned or not.
+    let catalogTimer = null;
+
+    $('#catalogQuery').on('input', function () {
+        const query = $(this).val();
+        clearTimeout(catalogTimer);
+        // Debounced: the server scans the whole titledb, one scan per keystroke is one too many.
+        catalogTimer = setTimeout(() => searchCatalog(query), 300);
+    });
+
+    function searchCatalog(query) {
+        if (query.trim().length < 2) {
+            $('#catalogGrid').empty();
+            $('#catalogStatus').text('');
+            return;
+        }
+        $('#catalogStatus').text('Searching...');
+        $.ajax({
+            url: '/api/catalog/search', type: 'POST', contentType: 'application/json',
+            data: JSON.stringify({query: query}),
+            success: function (result) {
+                if (!result['success']) {
+                    const error = (result['errors'] || [{}])[0]['error'] || 'Search failed.';
+                    $('#catalogGrid').empty();
+                    $('#catalogStatus').html(`<span class="text-warning">${escapeHtml(error)}</span>`);
+                    return;
+                }
+                renderCatalog(result['results'] || [], result['truncated']);
+            },
+            error: function () {
+                $('#catalogGrid').empty();
+                $('#catalogStatus').html('<span class="text-danger">Search request failed.</span>');
+            }
+        });
+    }
+
+    function renderCatalog(results, truncated) {
+        const grid = $('#catalogGrid').empty();
+        if (!results.length) {
+            $('#catalogStatus').text('No game found.');
+            return;
+        }
+        $('#catalogStatus').text(truncated
+            ? `Showing the first ${results.length} matches, refine your search.`
+            : `${results.length} ${results.length === 1 ? 'result' : 'results'}`);
+
+        results.forEach(function (game) {
+            const card = $('<div class="card text-bg-dark game-card"></div>').css('cursor', 'pointer');
+
+            const art = game.bannerUrl || game.iconUrl;
+            if (art) {
+                card.append($('<img class="card-img" alt="">').attr('src', art));
+            } else {
+                // Not every titledb entry carries cover art. An empty src ships a broken
+                // image box, so hold the tile's shape with a plain block instead.
+                card.append($('<div class="card-img bg-secondary"></div>').css('aspect-ratio', '2 / 1'));
+            }
+
+            const overlay = $('<div class="card-img-overlay game-info"></div>');
+            overlay.append($('<h5 class="card-title game-title"></h5>').text(game.name));
+
+            const tags = $('<div class="tags-container"></div>');
+            tags.append($('<span class="badge rounded-pill game-tag"></span>')
+                .addClass(game.owned ? 'text-bg-success' : 'text-bg-secondary')
+                .text(game.owned ? 'Owned' : 'Search'));
+            overlay.append(tags);
+
+            card.append(overlay);
+            // Owned games stay clickable: the user may want a different release.
+            card.on('click', () => openReleaseSearch({title_id: game.title_id, catalog: true}));
+            grid.append(card);
+        });
+    }
+</script>
+
+{% include 'release_modal.html' %}
+{% endblock %}
