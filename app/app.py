@@ -362,12 +362,13 @@ def library_paths_api():
 @access_required('admin')
 def set_library_management_settings_api():
     data = request.json
-    set_library_management_settings(data)
-    reload_conf()
-    post_library_change()
+    success, errors = set_library_management_settings(data)
+    if success:
+        reload_conf()
+        post_library_change()
     resp = {
-        'success': True,
-        'errors': []
+        'success': success,
+        'errors': errors
     }
     return jsonify(resp)
 

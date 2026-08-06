@@ -1,6 +1,7 @@
 """
 Sphaira client implementation.
 """
+import os
 from flask import Request, Response, request, send_from_directory
 
 from .client import BaseClient
@@ -113,8 +114,9 @@ class SphairaClient(BaseClient):
             library = Libraries.query.filter_by(id=file.library_id).first()
             
             library_path = library.path.rstrip('/')
-            file_path = file.filepath
-            
+            # Published name, which differs from the name on disk in hardlink mode
+            file_path = os.path.join(os.path.dirname(file.filepath), file.filename)
+
             # Strip library path to get relative path
             relative_path = file_path[len(library_path):].lstrip('/')
             
@@ -166,7 +168,8 @@ class SphairaClient(BaseClient):
             # Throws NspBadMagic for HEAD requests anyway
             return self.error_response("File not found")
 
-        self.log_info(f"Serving file: {file.folder}/{filename}")
+        self.log_info(f"Serving file: {file.filepath}")
         increment_download_count_throttled(file.filepath, request.remote_addr)
 
-        return send_from_directory(file.folder, filename)
+        # Serve from the real path: it is the only one guaranteed to exist on disk
+        return send_from_directory(*os.path.split(file.filepath))

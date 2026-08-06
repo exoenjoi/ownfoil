@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import os
 import shutil
@@ -30,98 +31,147 @@ def sanitize_filename(name, windows_compatible=False):
 
     return sanitized
 
+def organized_relpath(file_obj, organizer_settings):
+    """Relative path built from the configured template, or None if it can't be computed."""
+    # Get the associated app for the file
+    app = file_obj.apps[0] if file_obj.apps else None
+    if not app:
+        logger.warning(f"No app associated with file {file_obj.filename}. Skipping organization.")
+        return None
+
+    template = _get_template_for_file(file_obj, app, organizer_settings['templates'])
+
+    # Retrieve data for template formatting
+    # Get title name from the associated title_id
+    title_info = titles_lib.get_game_info(app.title.title_id)
+    if title_info['name'] == 'Unrecognized':
+        logger.warning(f"No title info associated with file {file_obj.filename}. Skipping organization.")
+        return None
+
+    format_data = {
+        "extension": file_obj.extension,
+        "titleId": app.title.title_id,
+        "titleName": title_info['name'],
+    }
+    if not file_obj.multicontent:
+        format_data["appId"] = app.app_id
+        format_data["appVersion"] = app.app_version
+        format_data["patchLevel"] = titles_lib.get_update_number(app.app_version)
+
+        game_info = titles_lib.get_game_info(app.app_id)
+        if app.app_type == APP_TYPE_DLC:
+            format_data["appName"] = game_info['name']
+        else:
+            format_data["appName"] = title_info['name']
+
+    # Format the new relative path and remove leading slash if present
+    raw_path = template.format(**format_data).lstrip('/')
+    windows_compatible = organizer_settings.get('windows_compatible', False)
+    safe_parts = [sanitize_filename(part, windows_compatible) for part in Path(raw_path).parts]
+    return os.path.join(*safe_parts)
+
+def same_file(path_a, path_b):
+    """True if both paths exist and point to the same file (same path or same inode)."""
+    try:
+        return os.path.samefile(path_a, path_b)
+    except OSError:
+        return False
+
+def place_file(src, dest, hardlink):
+    """Put the file at dest, by hardlink or by move. Returns True if the file is in place."""
+    if hardlink and same_file(src, dest):
+        # Already linked: the organizer runs again on every scan, this must be a no-op
+        return True
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if hardlink:
+            os.link(src, dest)
+        else:
+            shutil.move(src, dest)
+    except OSError as e:
+        if e.errno == errno.EXDEV:
+            logger.error(f"Cannot link '{src}' to '{dest}': the organizer destination must be on the "
+                         f"same filesystem as the library.")
+        else:
+            logger.error(f"Error placing file from '{src}' to '{dest}': {e}")
+        return False
+    return True
+
 def organize_file(file_obj, library_path, organizer_settings, watcher):
     try:
-        templates = organizer_settings['templates']
-        
         current_filepath = file_obj.filepath
-        
-        # Get the associated app for the file
-        app = file_obj.apps[0] if file_obj.apps else None
-        if not app:
-            logger.warning(f"No app associated with file {file_obj.filename}. Skipping organization.")
+        new_relative_path = organized_relpath(file_obj, organizer_settings)
+        if new_relative_path is None:
             return
 
-        template = _get_template_for_file(file_obj, app, templates)
+        # A destination means hardlink mode: source files are linked, never moved
+        destination = organizer_settings.get('destination')
+        hardlink = bool(destination)
+        new_full_path = os.path.join(destination or library_path, new_relative_path)
 
-        # Retrieve data for template formatting
-        format_data = {}
-        # Get title name from the associated title_id
-        title_info = titles_lib.get_game_info(app.title.title_id)
-        if title_info['name'] == 'Unrecognized':
-            logger.warning(f"No title info associated with file {file_obj.filename}. Skipping organization.")
-            return
-        format_data["extension"] = file_obj.extension
-        format_data["titleId"] = app.title.title_id
-        format_data["titleName"] = title_info['name']
-        if not file_obj.multicontent:
-            format_data["appId"] = app.app_id
-            format_data["appVersion"] = app.app_version
-            format_data["patchLevel"] = titles_lib.get_update_number(app.app_version)
-
-            game_info = titles_lib.get_game_info(app.app_id)
-            if app.app_type == APP_TYPE_DLC:
-                format_data["appName"] = game_info['name']
-            else:
-                format_data["appName"] = title_info['name']
-        
-        # Format the new relative path and remove leading slash if present
-        raw_path = template.format(**format_data).lstrip('/')
-        windows_compatible = organizer_settings.get('windows_compatible', False)
-        safe_parts = [sanitize_filename(part, windows_compatible) for part in Path(raw_path).parts]
-        new_relative_path = os.path.join(*safe_parts)
-        
-        # Construct the full new path
-        new_full_path = os.path.join(library_path, new_relative_path)
-
-        if current_filepath == new_full_path:
-            return
-        
-        # Ensure the directory exists
+        # Handle duplicates
         new_dir = os.path.dirname(new_full_path)
-        try:
-            os.makedirs(new_dir, exist_ok=True)
-        except OSError as e:
-            logger.error(f"Error creating directory {new_dir} for file {file_obj.filename}: {e}")
-            return
-        
-        # Move the file, handling duplicates
         base_name = os.path.splitext(os.path.basename(new_full_path))[0]
-        
+
         counter = 1
         final_new_full_path = new_full_path
         while os.path.exists(final_new_full_path):
-            if final_new_full_path == current_filepath:
+            if same_file(current_filepath, final_new_full_path):
+                # Already organized, only keep the published name in sync
+                publish_as(file_obj, final_new_full_path, hardlink)
                 return
             counter += 1
             new_filename = f"{base_name}({counter}).{file_obj.extension}"
             final_new_full_path = os.path.join(new_dir, new_filename)
-        
+
         logger.info(f'Organizing file: {file_obj.filename}')
-        try:
-            # Add the move event to the ignored list before performing the move
-            with watcher.event_handler.ignored_events_lock:
-                watcher.event_handler.ignored_events_tuples.add((current_filepath, final_new_full_path))
-            
-            shutil.move(current_filepath, final_new_full_path)
+
+        if hardlink:
+            if place_file(current_filepath, final_new_full_path, True):
+                logger.info(f"Linked '{current_filepath}' to '{final_new_full_path}'")
+                publish_as(file_obj, final_new_full_path, True)
+            return
+
+        # Add the move event to the ignored list before performing the move
+        with watcher.event_handler.ignored_events_lock:
+            watcher.event_handler.ignored_events_tuples.add((current_filepath, final_new_full_path))
+
+        if place_file(current_filepath, final_new_full_path, False):
             logger.info(f"Moved '{current_filepath}' to '{final_new_full_path}'")
-            
             # Update the file path in the database
-            # Get the library path from the library ID
             library_path_str = get_library_path(file_obj.library_id)
             update_file_path(library_path_str, current_filepath, final_new_full_path)
-            # logger.info(f"Updated database for file '{current_filepath}' to '{final_new_full_path}'")
-
-        except (shutil.Error, OSError) as e:
-            logger.error(f"Error moving file from '{current_filepath}' to '{final_new_full_path}': {e}")
-            # If an error occurs, ensure the event is removed from the ignored list
+        else:
+            # The move failed, the watchdog will never consume the ignored event
             with watcher.event_handler.ignored_events_lock:
-                if (current_filepath, final_new_full_path) in watcher.event_handler.ignored_events_tuples:
-                    watcher.event_handler.ignored_events_tuples.remove((current_filepath, final_new_full_path))
-        # No finally block needed for removing from ignored_move_events, as it's removed by the watchdog handler
+                watcher.event_handler.ignored_events_tuples.discard((current_filepath, final_new_full_path))
 
     except Exception as e:
         logger.error(f"An unexpected error occurred while organizing file {file_obj.filename}: {e}")
+
+def publish_as(file_obj, link_path, hardlink):
+    """In hardlink mode the source file keeps its original name on disk, so the database holds
+    the name of the organized link: that is the name the shops publish the file under."""
+    if not hardlink:
+        return
+    filename = os.path.basename(link_path)
+    if file_obj.filename != filename:
+        update_file_name(file_obj.id, filename)
+
+def unlink_organized_file(file_obj, organizer_settings):
+    """Hardlink mode: remove the organized link of a file, never the source."""
+    relative_path = organized_relpath(file_obj, organizer_settings)
+    if relative_path is None:
+        return
+    # The published name is the name of the link, it may carry a (N) duplicate suffix
+    link = os.path.join(organizer_settings['destination'], os.path.dirname(relative_path), file_obj.filename)
+    if not same_file(file_obj.filepath, link):
+        return
+    try:
+        os.remove(link)
+        logger.info(f"Removed outdated update link: {link}")
+    except OSError as e:
+        logger.error(f"Error removing link {link}: {e}")
 
 def _get_template_for_file(file_obj, app, templates):
     """Helper function to determine the correct template for file organization."""
@@ -466,89 +516,99 @@ def process_library_organization(app, watcher):
     logger.info(f"Starting library organization process for all libraries...")
     try:
         app_settings = load_settings()
-        organizer_settings = app_settings['library']['management']['organizer']
+        management_settings = app_settings['library']['management']
+        organizer_settings = management_settings['organizer']
+        # In hardlink mode the source files are only ever read: they are never moved nor deleted
+        hardlink = organizer_settings['enabled'] and bool(organizer_settings.get('destination'))
+        delete_older_updates = management_settings['delete_older_updates']
+
         if organizer_settings['enabled']:
             with app.app_context():
+                # ponytail: no sweep of the destination folder, stale links (template changed,
+                # source deleted) pile up. Add a sweep if that becomes a problem.
+                outdated_file_ids = set()
+                if hardlink and delete_older_updates:
+                    outdated_file_ids = {f.id for f in get_outdated_update_files()}
+
                 libraries = get_libraries()
                 for library in libraries:
                     library_path = library.path
                     # Get all identified files for the current library
                     identified_files = Files.query.filter_by(library_id=library.id, identified=True).all()
                     for file_obj in identified_files:
-                        organize_file(file_obj, library_path, organizer_settings, watcher)
-                    
-                    # Remove empty directories if needed
-                    if organizer_settings['remove_empty_folders']:
+                        if file_obj.id in outdated_file_ids:
+                            unlink_organized_file(file_obj, organizer_settings)
+                        else:
+                            organize_file(file_obj, library_path, organizer_settings, watcher)
+
+                    # Remove empty directories if needed, never in the source tree
+                    if organizer_settings['remove_empty_folders'] and not hardlink:
                         delete_empty_folders(library_path)
 
         # Remove outdated update files
-        if app_settings['library']['management']['delete_older_updates']:
+        if delete_older_updates and not hardlink:
             remove_outdated_update_files(watcher)
     except Exception as e:
         logger.error(f"Error during library organization process: {e}")
     logger.info(f"Library organization process for all libraries completed.")
 
+def get_outdated_update_files():
+    """Files holding an update for which a greater owned version exists."""
+    outdated_files = []
+    for title in get_all_titles():
+        title_apps = get_all_title_apps(title.title_id)
+
+        # Filter for owned update apps
+        owned_update_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_UPD and app.get('owned')]
+
+        # If there's only one or no owned update apps, there's no "greater version available" to compare against.
+        if len(owned_update_apps) <= 1:
+            continue
+
+        # Group owned update apps by their version for easy lookup
+        owned_versions = {int(app['app_version']) for app in owned_update_apps}
+
+        # Iterate through all update apps (owned or not) for this title
+        for app_data in title_apps:
+            if app_data.get('app_type') != APP_TYPE_UPD:
+                continue
+
+            # Check if there's a greater owned version available for this title
+            if not any(owned_v > int(app_data['app_version']) for owned_v in owned_versions):
+                continue
+
+            # Get the actual App object from the database
+            app_obj = get_app_by_id_and_version(app_data['app_id'], app_data['app_version'])
+            if app_obj:
+                # Copy the collection, the original might change while the caller deletes files
+                outdated_files += [f for f in app_obj.files if f.identified and not f.multicontent]
+    return outdated_files
+
 def remove_outdated_update_files(watcher):
     logger.info("Starting removal of outdated update files...")
     try:
-        titles = get_all_titles()
-        
-        for title in titles:
-            title_apps = get_all_title_apps(title.title_id)
-            
-            # Filter for owned update apps
-            owned_update_apps = [app for app in title_apps if app.get('app_type') == APP_TYPE_UPD and app.get('owned')]
-            
-            # If there's only one or no owned update apps, there's no "greater version available" to compare against.
-            if len(owned_update_apps) <= 1:
+        for file_obj in get_outdated_update_files():
+            logger.info(f"Removing outdated update file: {file_obj.filepath} - Greater owned version available.")
+
+            # Remove from disk
+            if not os.path.exists(file_obj.filepath):
+                logger.warning(f"Physical file not found for deletion: {file_obj.filepath}")
                 continue
-            
-            # Group owned update apps by their version for easy lookup
-            owned_versions = {int(app['app_version']) for app in owned_update_apps}
-            
-            # Iterate through all update apps (owned or not) for this title
-            for app_data in title_apps:
-                if app_data.get('app_type') == APP_TYPE_UPD:
-                    current_app_version = int(app_data['app_version'])
-                    
-                    # Check if there's a greater owned version available for this title
-                    has_greater_owned_version = any(
-                        owned_v > current_app_version for owned_v in owned_versions
-                    )
-                    
-                    if has_greater_owned_version:
-                        # Get the actual App object from the database
-                        app_obj = get_app_by_id_and_version(app_data['app_id'], app_data['app_version'])
-                        
-                        if app_obj:
-                            # Get files associated with this specific app version
-                            # Create a list to iterate over as the original collection might change during deletion
-                            files_to_process = list(app_obj.files) 
-                            for file_obj in files_to_process:
-                                # Check if file meets criteria: identified, not multicontent
-                                if file_obj.identified and not file_obj.multicontent:
-                                    logger.info(f"Removing outdated update file: {file_obj.filepath} (App ID: {app_obj.app_id}, Version: {app_obj.app_version}) - Greater owned version available.")
-                                    
-                                    # Remove from disk
-                                    if os.path.exists(file_obj.filepath):
-                                        try:
-                                            # Add the delete event to the ignored list before performing the remove
-                                            with watcher.event_handler.ignored_events_lock:
-                                                watcher.event_handler.ignored_events_tuples.add((file_obj.filepath, ""))
-                                            os.remove(file_obj.filepath)
-                                            logger.debug(f"Deleted physical file: {file_obj.filepath}")
-                                            # Remove from database and update app owned status
-                                            # This function handles db.session.delete(file_obj) and app.owned status
-                                            remove_file_from_apps(file_obj.id)
-                                        except OSError as e:
-                                            logger.error(f"Error deleting physical file {file_obj.filepath}: {e}")
-                                            # If an error occurs, ensure the event is removed from the ignored list
-                                            with watcher.event_handler.ignored_events_lock:
-                                                if (file_obj.filepath, "") in watcher.event_handler.ignored_events_tuples:
-                                                    watcher.event_handler.ignored_events_tuples.remove((file_obj.filepath, ""))
-                                    else:
-                                        logger.warning(f"Physical file not found for deletion: {file_obj.filepath}")
-                                    
+            try:
+                # Add the delete event to the ignored list before performing the remove
+                with watcher.event_handler.ignored_events_lock:
+                    watcher.event_handler.ignored_events_tuples.add((file_obj.filepath, ""))
+                os.remove(file_obj.filepath)
+                logger.debug(f"Deleted physical file: {file_obj.filepath}")
+                # Remove from database and update app owned status
+                # This function handles db.session.delete(file_obj) and app.owned status
+                remove_file_from_apps(file_obj.id)
+            except OSError as e:
+                logger.error(f"Error deleting physical file {file_obj.filepath}: {e}")
+                # If an error occurs, ensure the event is removed from the ignored list
+                with watcher.event_handler.ignored_events_lock:
+                    watcher.event_handler.ignored_events_tuples.discard((file_obj.filepath, ""))
+
         logger.info(f"Finished removal of outdated update files.")
     except Exception as e:
         logger.error(f"Error during removal of outdated update files: {e}")

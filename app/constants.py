@@ -30,6 +30,7 @@ DEFAULT_SETTINGS = {
             "delete_older_updates": False,
             "organizer": {
                 "enabled": False,
+                "destination": "",
                 "remove_empty_folders": False,
                 "windows_compatible": False,
                 "templates": {

@@ -200,6 +200,16 @@ def update_file_path(library, old_path, new_path):
         db.session.rollback()  # Roll back the session in case of an error
         logger.error(f"An error occurred while updating the file path: {str(e)}")
 
+def update_file_name(file_id, filename):
+    """Set the name a file is published under. In hardlink mode this is the name of the
+    organized link, which differs from the name of the source file on disk."""
+    try:
+        Files.query.filter_by(id=file_id).update({'filename': filename})
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"An error occurred while updating the file name: {str(e)}")
+
 def get_all_titles_from_db():
     results = Files.query.all()
     return [to_dict(r) for r in results]

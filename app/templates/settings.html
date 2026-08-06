@@ -200,7 +200,8 @@
                 <div class="mb-3 form-check">
                     <input type="checkbox" class="form-check-input" id="deleteOlderUpdatesCheck">
                     <label class="form-check-label" for="deleteOlderUpdatesCheck">Delete older updates</label>
-                    <div class="form-text">Deletes older update files when a newer version is available in the library.</div>
+                    <div class="form-text">Deletes older update files when a newer version is available in the library.
+                        When an organizer destination folder is set, only the link is removed, the source file is kept.</div>
                 </div>
 
                 <h4 class="py-2">Organizer</h4>
@@ -212,10 +213,21 @@
                             <label class="form-check-label" for="organizerEnabledCheck">Enable organizer</label>
                             <div class="form-text">Enables automatic organization of identified files in the library, according to the templates below.</div>
                         </div>
+                        <div class="mb-3">
+                            <label for="organizerDestinationInput" class="form-label">Destination folder:</label>
+                            <input type="text" class="form-control form-control-code" id="organizerDestinationInput">
+                            <div class="invalid-feedback" id="organizerDestinationInputFeedback"></div>
+                            <div class="form-text">Leave empty to rename files in place. When set, source files are never
+                                touched: Ownfoil creates hardlinks with the templated names in this folder, which becomes
+                                your organized library. Useful when the files must keep their original name, e.g. torrents
+                                being seeded. The folder must exist, must be outside of every library, and must be on the
+                                same filesystem as your libraries (hardlinks cannot cross filesystems).</div>
+                        </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="removeEmptyFoldersCheck">
                             <label class="form-check-label" for="removeEmptyFoldersCheck">Remove empty folders</label>
-                            <div class="form-text">Removes empty folders after organizing files.</div>
+                            <div class="form-text">Removes empty folders after organizing files. Ignored when a destination
+                                folder is set, source folders are left untouched.</div>
                         </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="windowsCompatibleCheck">
@@ -227,7 +239,8 @@
                 </div>
 
                 <h5 class="pb-3 pt-2">Templates</h5>
-                <p>The final computed paths will be relative to the root path of the library, the file extension is added automatically.</p>
+                <p>The final computed paths will be relative to the root path of the library, or to the destination folder
+                    when one is set, the file extension is added automatically.</p>
                 <div class="row">
                     <div class="col-7">
                         <div class="mb-3">
@@ -1017,6 +1030,7 @@
             delete_older_updates: getCheckboxStatus("deleteOlderUpdatesCheck"),
             organizer: {
                 enabled: getCheckboxStatus("organizerEnabledCheck"),
+                destination: getInputVal("organizerDestinationInput").trim(),
                 remove_empty_folders: getCheckboxStatus("removeEmptyFoldersCheck"),
                 windows_compatible: getCheckboxStatus("windowsCompatibleCheck"),
                 templates: {
@@ -1036,6 +1050,19 @@
             success: function (result) {
                 if (!result['success']) {
                     console.log('Not Success!');
+                    (result['errors'] || []).forEach(error => {
+                        if (error['path'] === 'library/management/organizer/destination') {
+                            $('#organizerDestinationInputFeedback').text(error['error']);
+                            $('#organizerDestinationInputFeedback').addClass('invalid-feedback d-block');
+                            $("#organizerDestinationInput").addClass('is-invalid');
+                        }
+                        console.log('Path:', error['path']);
+                        console.log('Error:', error['error']);
+                    });
+                } else {
+                    $('#organizerDestinationInputFeedback').text('');
+                    $('#organizerDestinationInputFeedback').removeClass('invalid-feedback d-block');
+                    $("#organizerDestinationInput").removeClass('is-invalid');
                 }
                 $('#submitLibraryManagementSettingsBtn').prop('disabled', false);
             }
@@ -1129,6 +1156,7 @@
             $("#compressFilesCheck").prop("checked", librarySettings['management']['compress_files']);
             $("#deleteOlderUpdatesCheck").prop("checked", librarySettings['management']['delete_older_updates']);
             $("#organizerEnabledCheck").prop("checked", librarySettings['management']['organizer']['enabled']);
+            setInputVal("organizerDestinationInput", librarySettings['management']['organizer']['destination']);
             $("#removeEmptyFoldersCheck").prop("checked", librarySettings['management']['organizer']['remove_empty_folders']);
             $("#windowsCompatibleCheck").prop("checked", librarySettings['management']['organizer']['windows_compatible']);
             setInputVal("baseTemplateInput", librarySettings['management']['organizer']['templates']['base']);

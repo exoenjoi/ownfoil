@@ -152,6 +152,28 @@ In the `Settings` page under the `Library` section, you can add directories cont
 
 The automatic library organization can be configured in the `Organizer` section to set your own templates, enable removing older updates...
 
+### Organizer destination (hardlink mode)
+
+By default the organizer renames and moves the files inside their library. If your files must keep
+their name on disk - typically torrents that are still being seeded - set a `Destination folder` in
+the `Organizer` section: Ownfoil then creates **hardlinks** with the templated names in that folder
+and never touches the source files. The destination folder becomes your organized library, and the
+shop publishes the games under their organized names.
+
+Requirements:
+- the destination folder must be **outside** of every configured library, otherwise the links would
+  be scanned and every game would show up twice;
+- it must be on the **same filesystem** as the sources, hardlinks cannot cross filesystems. In
+  Docker, mount their common parent as a single volume, e.g. `-v /mnt/nas/switch:/games` with
+  `/games/torrents` (library) and `/games/organized` (destination). Two separate `-v` mounts, even
+  from the same NFS server, will fail with `EXDEV`;
+- `Remove empty folders` is ignored in this mode, and `Delete older updates` only removes the link,
+  never the source file.
+
+> [!NOTE]
+> Stale links are not cleaned up: changing a template or deleting a source file leaves the old link
+> behind in the destination folder.
+
 ## Titles configuration
 In the `Settings` page under the `Titles` section is where you specify the language of your Shop (currently the same for all users).
 
