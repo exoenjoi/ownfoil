@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "app/templates/index.html"
+        ],
+        "createdAt": "2026-08-06T11:08:38.280Z",
+        "reason": "jQuery-built <img> elements assign src via .attr('src', ...) in the same expression, before DOM insertion"
+      }
+    ]
+  }
+}
