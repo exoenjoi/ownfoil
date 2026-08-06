@@ -46,11 +46,18 @@ right there inside the NSP. `get_cnmts()` walked every NCA of an **Xci** but cal
 `Nsp.cnmt()` for an **Nsp** — and that helper returns the *first* `.cnmt.nca` and stops
 (`nsz/Fs/Nsp.py:220`). A merged base+update NSP therefore registered one content only: the base
 stayed `owned=False`, `nb_content` stayed 1, so `multicontent` stayed false and the organizer named
-the file with the `update` template. That name is the trap — base and update templates are identical
-in `DEFAULT_SETTINGS`, so the file reads as a base game and only one hex digit of the app id
-(`…2000` vs `…2800`) says otherwise. Same bug hit an `Incl.All.Dlcs` NSP: base owned, every DLC not.
+the file with the `update` template. That name was the trap: the base and update templates used to be
+identical, so the file read as a base game and only one hex digit of the app id (`…2000` vs `…2800`)
+said otherwise. Same bug hit an `Incl.All.Dlcs` NSP: base owned, every DLC not.
 
 Fixed by walking the whole container, mirroring the Xci branch. Covered by `app/test_titles.py`.
+
+**The `update` template now carries `[UPD]`**, so an update is never mistaken for a base game again.
+The marker is safe for the no-keys fallback — neither `\[([0-9A-Fa-f]{16})\]` nor `\[v(\d+)\]` can
+match it — and a test pins that against the real default. Two consequences: existing installs keep
+the template already written in their `settings.yaml` and must change it by hand, and changing it at
+all makes the organizer re-place every update file, which in hardlink mode leaves the old links
+behind (see the stale-links note above).
 
 **Re-identification is not automatic.** `get_files_to_identify()` only returns rows with
 `identified=False`, so files identified before the fix keep their half-truth. Remove and re-add the
