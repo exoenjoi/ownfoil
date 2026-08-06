@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import json
+import unicodedata
 
 import titledb
 from constants import *
@@ -325,6 +326,48 @@ def get_game_info(title_id):
             'id': title_id + ' not found in titledb',
             'category': '',
         }
+
+
+def _fold(text):
+    """Lowercase and strip accents, so 'pokemon' matches 'Pokémon'."""
+    decomposed = unicodedata.normalize('NFKD', text or '')
+    return ''.join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+# ponytail: linear scan of the whole titledb per search. The load it needs is already
+# paid by every manual downloader search, so this costs nothing extra today. If it ever
+# drags, build a slim (id, name, iconUrl) index when titledb is downloaded — or wait for
+# upstream 2.4.0, which puts titledb in SQL and makes this a LIKE query.
+def search_base_games(query, limit=60):
+    """Base games from titledb whose name contains the query.
+
+    Returns None when titledb is not loaded, so the caller can tell that apart from
+    an empty result. Returns up to limit + 1 records for the same reason: exactly
+    limit would be indistinguishable from a capped list. Names starting with the
+    query come first — searching 'zelda' should not bury the Zelda games.
+    """
+    global _titles_db
+    if _titles_db is None:
+        logger.error("titles_db is not loaded. Call load_titledb first.")
+        return None
+
+    needle = _fold(query).strip()
+    if not needle:
+        return []
+
+    matches = []
+    for record in _titles_db.values():
+        app_id, name = record.get('id'), record.get('name')
+        # An update id ends in 800 and a DLC id in something else; only a base game
+        # can be grabbed on its own.
+        if not app_id or not name or not app_id.endswith('000'):
+            continue
+        folded = _fold(name)
+        if needle in folded:
+            matches.append((not folded.startswith(needle), folded, record))
+
+    matches.sort(key=lambda match: match[:2])
+    return [match[2] for match in matches[:limit + 1]]
 
 def get_update_number(version):
     return int(version)//65536
