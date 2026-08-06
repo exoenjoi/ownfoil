@@ -76,8 +76,9 @@
                 card.append($('<img class="card-img" alt="">').attr('src', art));
             } else {
                 // Not every titledb entry carries cover art. An empty src ships a broken
-                // image box, so hold the tile's shape with a plain block instead.
-                card.append($('<div class="card-img bg-secondary"></div>').css('aspect-ratio', '2 / 1'));
+                // image box, so hold the tile's shape with a plain block instead — .card-img
+                // already pins the 16:9 ratio that keeps every row of the grid level.
+                card.append($('<div class="card-img bg-secondary"></div>'));
             }
 
             const overlay = $('<div class="card-img-overlay game-info"></div>');
