@@ -56,11 +56,18 @@ def rank_releases(releases, target, filters):
     patch_level = target.get('patch_level')
 
     ranked = []
+    dead = 0
     for release in releases:
         release = dict(release)
         title = release.get('title') or ''
         title_norm = _norm(title)
         seeders = int(release.get('seeders') or 0)
+
+        # A release nobody seeds cannot be downloaded at all, so it is not an override
+        # the user might want — it is noise. Dropped whatever min_seeders is set to.
+        if seeders == 0:
+            dead += 1
+            continue
         size = int(release.get('size') or 0)
         ext = _ext_of(title)
 
@@ -105,6 +112,8 @@ def rank_releases(releases, target, filters):
         ranked.append(release)
 
     ranked.sort(key=lambda r: (r['rejected'] is not None, -r['score'], -int(r.get('seeders') or 0)))
+    if dead:
+        logger.info(f'[downloader] Ignored {dead} release(s) with no seeder.')
     return ranked
 
 

@@ -135,6 +135,34 @@ def test_store_round_trip():
         assert len(store.all()) == 1
 
 
+# ------------------------------------------------------------- dead releases
+
+def dead_and_alive():
+    """One unusable release, one merely below the seeder threshold."""
+    return [
+        release('Mario Kart 8 Deluxe [v196608].nsp', seeders=0, guid='dead'),
+        release('Mario Kart 8 Deluxe [v196608].nsp', seeders=1, guid='thin'),
+    ]
+
+
+def test_a_dead_torrent_is_dropped_not_greyed():
+    # 0 seeders is not an override opportunity, it is undownloadable.
+    ranked = rank_releases(dead_and_alive(), UPDATE_TARGET, FILTERS)
+    assert [r['guid'] for r in ranked] == ['thin']
+
+
+def test_a_release_below_the_threshold_is_kept_and_greyed():
+    # 1 seeder with a minimum of 3 is a rejection the user may still want to override.
+    ranked = rank_releases(dead_and_alive(), UPDATE_TARGET, FILTERS)
+    assert ranked[0]['rejected'] and 'seeder' in ranked[0]['rejected']
+
+
+def test_a_dead_torrent_is_dropped_even_with_no_minimum():
+    # min_seeders=0 makes nothing "rejected" for seeders, but dead is still dead.
+    ranked = rank_releases(dead_and_alive(), UPDATE_TARGET, dict(FILTERS, min_seeders=0))
+    assert [r['guid'] for r in ranked] == ['thin']
+
+
 # ------------------------------------------------------------- catalog target
 
 def with_fake_game_info(name):
