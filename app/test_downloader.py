@@ -54,6 +54,16 @@ def test_base_game_is_never_taken_for_an_update():
     assert 'version marker' in reason
 
 
+def test_a_catalog_date_is_readable_or_absent():
+    # titledb writes a release date as the integer 20170303.
+    assert downloader._catalog_date(20170303) == '2017-03-03'
+    assert downloader._catalog_date('20170303') == '2017-03-03'
+    # Not every entry has one, and a malformed one is worse than none on a card.
+    assert downloader._catalog_date(None) == ''
+    assert downloader._catalog_date(2017) == ''
+    assert downloader._catalog_date('march 2017') == ''
+
+
 def test_a_release_carries_a_link_to_its_tracker_page():
     # Prowlarr fills infoUrl; when it does not, the guid is often the page URL itself.
     assert prowlarr._release({'infoUrl': 'https://tracker/1'})['info_url'] == 'https://tracker/1'

@@ -84,6 +84,19 @@
             const overlay = $('<div class="card-img-overlay game-info"></div>');
             overlay.append($('<h5 class="card-title game-title"></h5>').text(game.name));
 
+            // Two games can carry the same name — the id, the date and the publisher are
+            // what tell them apart before opening the release list. One line, id first:
+            // the overlay eats the cover art fast, and the id is the part worth reading
+            // whole, so the ellipsis takes the publisher rather than the id.
+            const meta = $('<div class="game-meta"></div>')
+                .append($('<span class="font-monospace"></span>').text(game.title_id));
+            const rest = [game.release_date, game.publisher].filter(Boolean).join(' · ');
+            if (rest) {
+                meta.append(document.createTextNode(' · ' + rest));
+            }
+            meta.attr('title', [game.title_id, rest].filter(Boolean).join(' · '));
+            overlay.append(meta);
+
             const tags = $('<div class="tags-container"></div>');
             tags.append($('<span class="badge rounded-pill game-tag"></span>')
                 .addClass(game.owned ? 'text-bg-success' : 'text-bg-secondary')

@@ -237,6 +237,12 @@ def resolve_target(app_id=None, app_version=None, title_id=None, catalog=False):
     return _target(app, resolved_title_id, name)
 
 
+def _catalog_date(value):
+    """titledb writes a release date as the integer 20170303. Anything else is dropped."""
+    text = str(value or '')
+    return f'{text[:4]}-{text[4:6]}-{text[6:8]}' if len(text) == 8 and text.isdigit() else ''
+
+
 @with_titledb
 def search_catalog(query, limit=60):
     """Base games matching the query, flagged with whether the library owns them."""
@@ -259,6 +265,10 @@ def search_catalog(query, limit=60):
             'iconUrl': record.get('iconUrl'),
             'bannerUrl': record.get('bannerUrl'),
             'owned': record['id'] in owned,
+            # Enough to tell two games with the same name apart, no extra lookup: these
+            # fields are already on the record the scan just walked.
+            'release_date': _catalog_date(record.get('releaseDate')),
+            'publisher': record.get('publisher') or '',
         } for record in records],
         'truncated': truncated,
     }

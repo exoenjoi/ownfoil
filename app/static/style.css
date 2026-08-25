@@ -219,6 +219,15 @@ p.game-description {
 
 /* Badges sit in the flow under the title — floating them bottom-right made them
    land on top of long titles. */
+.game-meta {
+    font-size: .72rem;
+    line-height: 1.25;
+    color: rgba(255, 255, 255, .65);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .tags-container {
     display: flex;
     flex-wrap: wrap;
@@ -245,6 +254,11 @@ p.game-description {
 
     .tags-container {
         margin-top: .15rem;
+    }
+
+    /* No room for them under a one-line title in a tile this small. */
+    .game-meta {
+        display: none;
     }
 }
 
