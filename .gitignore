@@ -25,3 +25,5 @@ uv.lock
 
 .claude
 CLAUDE.local.md
+# macOS
+.DS_Store
