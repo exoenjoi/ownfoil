@@ -342,6 +342,7 @@
         if (isBase) {
             return {
                 id: recognized ? title.titleId : title.titleId + ' not found in titledb',
+                title_id: title.titleId,
                 title_id_name: title.name || 'Unrecognized',
                 name: title.name || 'Unrecognized',
                 bannerUrl: meta.bannerUrl || PLACEHOLDER_BANNER,
@@ -429,11 +430,45 @@
                 tagsContainer.append(dlcBadge);
             }
 
+            const search = missingContentSearchButton(game);
+            if (search) {
+                tagsContainer.append(search);
+            }
+
             cardOverlay.append(tagsContainer);
             card.append(cardOverlay);
             gameCol.append(card);
             gameGrid.append(gameCol);
         });
+    }
+
+    // ---------------------------------------------------------- downloader
+
+    function missingContentSearchButton(game) {
+        // What the search resolves to is decided server side, the browser only says
+        // "this title is missing an update" or "this base game is missing".
+        // ponytail: base games only. Missing DLCs are counted by the DLC badge and have
+        // no button of their own - give each DLC one if that ever becomes a need.
+        if (game.app_type !== 'BASE' || !game.title_id) {
+            return null;
+        }
+        let payload = null;
+        if (game.owned === false) {
+            // A base game's app id is its title id
+            payload = {app_id: game.title_id};
+        } else if (game.has_latest_version === false) {
+            payload = {title_id: game.title_id};
+        }
+        if (!payload) {
+            return null;
+        }
+        return $('<span class="badge rounded-pill text-bg-secondary game-tag" title="Search releases"></span>')
+            .html('<i class="bi bi-search"></i>')
+            .css('cursor', 'pointer')
+            .on('click', function (event) {
+                event.stopPropagation();
+                openReleaseSearch(payload);
+            });
     }
 
     function renderIconView(apps) {
@@ -704,4 +739,6 @@
 
     });
 </script>
+
+{% include 'release_modal.html' %}
 {% endblock %}

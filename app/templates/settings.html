@@ -220,7 +220,8 @@
                 <div class="mb-3 form-check">
                     <input type="checkbox" class="form-check-input" id="deleteOlderUpdatesCheck">
                     <label class="form-check-label" for="deleteOlderUpdatesCheck">Delete older updates</label>
-                    <div class="form-text">Deletes older update files when a newer version is available in the library.</div>
+                    <div class="form-text">Deletes older update files when a newer version is available in the library.
+                        When an organizer destination folder is set, only the link is removed, the source file is kept.</div>
                 </div>
 
                 <h4 class="py-2">File compression</h4>
@@ -329,10 +330,21 @@
                             <label class="form-check-label" for="organizerEnabledCheck">Enable organizer</label>
                             <div class="form-text">Enables automatic organization of identified files in the library, according to the templates below.</div>
                         </div>
+                        <div class="mb-3">
+                            <label for="organizerDestinationInput" class="form-label">Destination folder:</label>
+                            <input type="text" class="form-control form-control-code" id="organizerDestinationInput">
+                            <div class="invalid-feedback" id="organizerDestinationInputFeedback"></div>
+                            <div class="form-text">Leave empty to rename files in place. When set, source files are never
+                                touched: Ownfoil creates hardlinks with the templated names in this folder, which becomes
+                                your organized library. Useful when the files must keep their original name, e.g. torrents
+                                being seeded. The folder must exist, must be outside of every library, and must be on the
+                                same filesystem as your libraries (hardlinks cannot cross filesystems).</div>
+                        </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="removeEmptyFoldersCheck">
                             <label class="form-check-label" for="removeEmptyFoldersCheck">Remove empty folders</label>
-                            <div class="form-text">Removes empty folders after organizing files.</div>
+                            <div class="form-text">Removes empty folders after organizing files. Ignored when a destination
+                                folder is set, source folders are left untouched.</div>
                         </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="windowsCompatibleCheck">
@@ -559,6 +571,84 @@
                     <button type="button" id="submitWorkerSettingsBtn" class="btn btn-primary"
                         onClick='submitWorkerSettings()'>Submit</button>
                 </div>
+
+                <hr class="hr-settings">
+                <h2 class="pb-2">Downloader</h2>
+                <p>Search Prowlarr for the content missing from your library, from the <code>Search</code> button on a
+                    game or from the <code>Discover</code> page. Prowlarr hands the release you pick to its own
+                    download client, so it must have one configured. Nothing is ever grabbed without your click.</p>
+
+                <h4 class="pt-3 pb-2">Prowlarr</h4>
+                <div class="row">
+                    <div class="col-7">
+                        <div class="mb-3">
+                            <label for="prowlarrUrlInput" class="form-label">Prowlarr URL:</label>
+                            <input type="text" class="form-control" id="prowlarrUrlInput" placeholder="http://prowlarr:9696">
+                            <div class="invalid-feedback" id="prowlarrUrlInputFeedback"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="prowlarrApiKeyInput" class="form-label">API key:</label>
+                            <input type="password" class="form-control" id="prowlarrApiKeyInput" autocomplete="new-password">
+                            <div class="form-text">Found in Prowlarr under Settings &gt; General. Leave empty to keep
+                                the one already saved.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="prowlarrCategoriesInput" class="form-label">Categories:</label>
+                            <input type="text" class="form-control form-control-code" id="prowlarrCategoriesInput" placeholder="1000, 1090">
+                            <div class="form-text">Optional, comma separated Newznab category ids. There is no standard
+                                category for the Switch, so this is empty by default and every indexer is searched.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <h4 class="pt-3 pb-2">qBittorrent <small class="text-body-secondary">(optional)</small></h4>
+                <p>Read only, used to show download progress. Ownfoil never adds or removes torrents.</p>
+                <div class="row">
+                    <div class="col-7">
+                        <div class="mb-3">
+                            <label for="qbtUrlInput" class="form-label">qBittorrent URL:</label>
+                            <input type="text" class="form-control" id="qbtUrlInput" placeholder="http://qbittorrent:8080">
+                        </div>
+                        <div class="mb-3">
+                            <label for="qbtUsernameInput" class="form-label">Username:</label>
+                            <input type="text" class="form-control" id="qbtUsernameInput" autocomplete="off">
+                        </div>
+                        <div class="mb-3">
+                            <label for="qbtPasswordInput" class="form-label">Password:</label>
+                            <input type="password" class="form-control" id="qbtPasswordInput" autocomplete="new-password">
+                            <div class="form-text">Leave empty to keep the one already saved.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <h4 class="pt-3 pb-2">Filters</h4>
+                <div class="row">
+                    <div class="col-7">
+                        <div class="mb-3">
+                            <label for="minSeedersInput" class="form-label">Minimum seeders:</label>
+                            <input type="number" min="0" class="form-control" id="minSeedersInput">
+                        </div>
+                        <div class="mb-3">
+                            <label for="maxSizeGbInput" class="form-label">Maximum size (GB):</label>
+                            <input type="number" min="0" step="0.1" class="form-control" id="maxSizeGbInput">
+                            <div class="form-text">Set to <code>0</code> for no size limit.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="preferredExtInput" class="form-label">Preferred extensions:</label>
+                            <input type="text" class="form-control form-control-code" id="preferredExtInput" placeholder="nsz, nsp, xcz, xci">
+                            <div class="form-text">Comma separated, best first. A release whose extension is not in
+                                this list is never grabbed.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <button type="button" id="submitDownloaderSettingsBtn" class="btn btn-primary"
+                        onClick='submitDownloaderSettings()'>Submit</button>
+                    <button type="button" id="testDownloaderBtn" class="btn btn-outline-secondary"
+                        onClick='testDownloader()'>Test connection</button>
+                </div>
+                <div id="downloaderTestResult"></div>
 
             </div>
 {% endblock %}
@@ -1233,6 +1323,7 @@
             delete_older_updates: getCheckboxStatus("deleteOlderUpdatesCheck"),
             organizer: {
                 enabled: getCheckboxStatus("organizerEnabledCheck"),
+                destination: getInputVal("organizerDestinationInput").trim(),
                 remove_empty_folders: getCheckboxStatus("removeEmptyFoldersCheck"),
                 windows_compatible: getCheckboxStatus("windowsCompatibleCheck"),
                 templates: {
@@ -1252,6 +1343,17 @@
             success: function (result) {
                 if (!result['success']) {
                     console.log('Not Success!');
+                    (result['errors'] || []).forEach(error => {
+                        if (error['path'] === 'library/management/organizer/destination') {
+                            $('#organizerDestinationInputFeedback').text(error['error']);
+                            $('#organizerDestinationInputFeedback').addClass('invalid-feedback d-block');
+                            $("#organizerDestinationInput").addClass('is-invalid');
+                        }
+                    });
+                } else {
+                    $('#organizerDestinationInputFeedback').text('');
+                    $('#organizerDestinationInputFeedback').removeClass('invalid-feedback d-block');
+                    $("#organizerDestinationInput").removeClass('is-invalid');
                 }
                 $('#submitLibraryManagementSettingsBtn').prop('disabled', false);
             }
@@ -1292,6 +1394,72 @@
                     $("#titledbUpdateIntervalInput").addClass('is-valid');
                 }
                 $('#submitSchedulerSettingsBtn').prop('disabled', false);
+            }
+        });
+    }
+
+    function submitDownloaderSettings() {
+        $('#submitDownloaderSettingsBtn').prop('disabled', true);
+        data = {
+            prowlarr: {
+                url: getInputVal("prowlarrUrlInput").trim(),
+                api_key: getInputVal("prowlarrApiKeyInput"),
+                categories: parseCsv("prowlarrCategoriesInput").map(Number).filter(n => !isNaN(n))
+            },
+            qbittorrent: {
+                url: getInputVal("qbtUrlInput").trim(),
+                username: getInputVal("qbtUsernameInput").trim(),
+                password: getInputVal("qbtPasswordInput")
+            },
+            filters: {
+                min_seeders: Number(getInputVal("minSeedersInput")) || 0,
+                max_size_gb: Number(getInputVal("maxSizeGbInput")) || 0,
+                preferred_ext: parseCsv("preferredExtInput")
+            }
+        }
+
+        $.ajax({
+            url: "/api/settings/downloader",
+            type: 'POST',
+            data: JSON.stringify(data),
+            contentType: "application/json",
+            success: function (result) {
+                $("#prowlarrUrlInput").removeClass('is-invalid');
+                if (!result['success']) {
+                    (result['errors'] || []).forEach(error => {
+                        if (error['path'] === 'downloader/prowlarr/url') {
+                            $('#prowlarrUrlInputFeedback').text(error['error']);
+                            $("#prowlarrUrlInput").addClass('is-invalid');
+                        }
+                        console.log('Path:', error['path'], 'Error:', error['error']);
+                    });
+                } else {
+                    // The secrets were saved, don't keep them in the form
+                    setInputVal("prowlarrApiKeyInput", "");
+                    setInputVal("qbtPasswordInput", "");
+                }
+                $('#submitDownloaderSettingsBtn').prop('disabled', false);
+            }
+        });
+    }
+
+    function testDownloader() {
+        $('#testDownloaderBtn').prop('disabled', true);
+        $('#downloaderTestResult').html('<div class="text-body-secondary">Testing...</div>');
+        $.ajax({
+            url: "/api/downloader/test",
+            type: 'POST',
+            contentType: "application/json",
+            success: function (result) {
+                const line = (name, res) => `<div class="alert alert-${res['success'] ? 'success' : 'danger'} py-2 mb-2">
+                    <strong>${name}:</strong> ${res['message']}</div>`;
+                $('#downloaderTestResult').html(line('Prowlarr', result['prowlarr'])
+                    + line('qBittorrent', result['qbittorrent']));
+                $('#testDownloaderBtn').prop('disabled', false);
+            },
+            error: function () {
+                $('#downloaderTestResult').html('<div class="alert alert-danger py-2">Test request failed.</div>');
+                $('#testDownloaderBtn').prop('disabled', false);
             }
         });
     }
@@ -1398,6 +1566,7 @@
             $("input[name='verificationDepth'][value='" + verification['depth'] + "']").prop("checked", true);
             $("#deleteOlderUpdatesCheck").prop("checked", librarySettings['management']['delete_older_updates']);
             $("#organizerEnabledCheck").prop("checked", librarySettings['management']['organizer']['enabled']);
+            setInputVal("organizerDestinationInput", librarySettings['management']['organizer']['destination']);
             $("#removeEmptyFoldersCheck").prop("checked", librarySettings['management']['organizer']['remove_empty_folders']);
             $("#windowsCompatibleCheck").prop("checked", librarySettings['management']['organizer']['windows_compatible']);
             setInputVal("baseTemplateInput", librarySettings['management']['organizer']['templates']['base']);
@@ -1427,6 +1596,22 @@
             }
             if (workerSettings && workerSettings['group_limits'] && workerSettings['group_limits']['io'] !== undefined) {
                 $('#ioLimitInput').val(workerSettings['group_limits']['io']);
+            }
+
+            // Downloader settings, secrets are never sent back by the API
+            downloaderSettings = result['downloader'];
+            if (downloaderSettings) {
+                setInputVal("prowlarrUrlInput", downloaderSettings['prowlarr']['url']);
+                setInputVal("prowlarrCategoriesInput", (downloaderSettings['prowlarr']['categories'] || []).join(', '));
+                setInputVal("qbtUrlInput", downloaderSettings['qbittorrent']['url']);
+                setInputVal("qbtUsernameInput", downloaderSettings['qbittorrent']['username']);
+                $("#prowlarrApiKeyInput").attr('placeholder',
+                    downloaderSettings['prowlarr']['api_key_set'] ? '••••••••  (saved)' : '');
+                $("#qbtPasswordInput").attr('placeholder',
+                    downloaderSettings['qbittorrent']['password_set'] ? '••••••••  (saved)' : '');
+                setInputVal("minSeedersInput", downloaderSettings['filters']['min_seeders']);
+                setInputVal("maxSizeGbInput", downloaderSettings['filters']['max_size_gb']);
+                setInputVal("preferredExtInput", (downloaderSettings['filters']['preferred_ext'] || []).join(', '));
             }
 
             // Shop settings

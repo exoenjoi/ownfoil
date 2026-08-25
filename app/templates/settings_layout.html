@@ -21,6 +21,11 @@
                         Stats
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if request.path.startswith('/admin/downloads') %} active{% endif %}" href="/admin/downloads">
+                        Downloads
+                    </a>
+                </li>
             </ul>
         </nav>
         <div class="col settings-panel">
