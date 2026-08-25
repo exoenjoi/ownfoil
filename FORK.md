@@ -115,6 +115,14 @@ Decisions:
   release with its rejection reason and the size, and the user picks.
 - The release modal lives in `templates/release_modal.html`, included by both the library and
   Discover. `missingContentSearchButton()` stayed in `index.html` — it takes a library group object.
+- **A Discover card carries `title id · release date · publisher`**, one line, id first so the
+  ellipsis eats the publisher rather than the id. Two titledb entries can share a name (the game
+  and its KIOSK demo), and the id is what tells them apart before opening the release list. The
+  fields come off the record the catalog scan already walked, so the search costs nothing more.
+- **Discover's grid is pinned to 300px tiles** (`#catalogGrid` in `style.css`). It is the only grid
+  with no size slider, and the library's 220px default leaves a 221x124 card whose overlay covers
+  109px of it — the metadata line overflowed and the cover art was gone. 300px is also the slider's
+  second notch, so both grids render identically when the library is set there.
 - **A release with 0 seeder is dropped in `rank_releases()`, whatever `min_seeders` says.** It is not
   an override the user might want, it is undownloadable. Releases merely *below* `min_seeders` stay,
   greyed out with the reason — that distinction is the point.
@@ -211,6 +219,11 @@ opening a browser at startup, LAN IP on the setup page.
 
 - Image: `ghcr.io/exoenjoi/ownfoil:latest`, public, amd64 + arm64. Rebuilt by GitHub Actions on
   every push to `master` (`.github/workflows/docker.yml`, uses the built-in token, no secret).
+- **`docker compose up -d` alone does not fetch a new `latest`** — it reuses the locally cached one,
+  which is how a merged feature can appear missing on the instance. Always `docker compose pull &&
+  docker compose up -d`. To check what the registry holds:
+  `gh api /user/packages/container/ownfoil/versions --jq '.[] | select(.metadata.container.tags[]? == "latest") | .name'`
+  against `docker image inspect ghcr.io/exoenjoi/ownfoil:latest --format '{{index .RepoDigests 0}}'`.
 - **A branch has no `latest`.** The workflow only auto-builds `master`, so a testable image of a
   branch comes from pushing a tag: `git tag -a 2.4.0-<branch>.N -m '…' && git push origin
   2.4.0-<branch>.N` builds `ghcr.io/exoenjoi/ownfoil:2.4.0-<branch>.N` (the workflow's tag filter
