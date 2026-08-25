@@ -393,6 +393,17 @@ def create_file(library_id, filepath, file_info):
     return new_file
 
 
+def update_file_name(file_id, filename):
+    """Set the name a file is published under. In hardlink mode this is the name of the
+    organized link, which differs from the name of the source file on disk."""
+    try:
+        Files.query.filter_by(id=file_id).update({'filename': filename})
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"An error occurred while updating the file name: {str(e)}")
+
+
 def update_file_path(library, old_path, new_path):
     try:
         # Find the file entry in the database using the old_path

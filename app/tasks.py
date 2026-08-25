@@ -855,7 +855,9 @@ def library_maintenance_task(library_path=None, **kwargs):
     """Post-organization GC: prune empty folders and outdated updates."""
     settings = get_settings()
     organizer = settings['library']['management']['organizer']
-    if organizer.get('enabled') and organizer.get('remove_empty_folders'):
+    # Never in hardlink mode: the folders are the torrent directories, not ours to prune
+    if (organizer.get('enabled') and organizer.get('remove_empty_folders')
+            and not organizer.get('destination')):
         paths = [library_path] if library_path else [lib.path for lib in get_libraries()]
         for path in paths:
             delete_empty_folders(path)

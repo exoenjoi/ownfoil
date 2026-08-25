@@ -1,3 +1,4 @@
+import errno
 import os
 import re
 import shutil
@@ -9,7 +10,8 @@ import titles as titles_lib
 import sys
 from pathlib import Path
 from utils import *
-from db import update_file_path
+from db import update_file_path, update_file_name
+from settings import get_settings
 
 def prepare_template_names(format_data, windows_compatible):
     """Sanitize the names before formatting, so they cannot introduce path separators, and cap their length."""
@@ -19,17 +21,19 @@ def prepare_template_names(format_data, windows_compatible):
 
     return {**format_data, **names}
 
-def organize_file(file_obj, library_path, organizer_settings):
+def organized_relpath(file_obj, root, organizer_settings):
+    """Relative path built from the configured template, or None if it cannot be computed.
+
+    `root` is the tree the path is relative to: the library, or the organizer destination
+    in hardlink mode. It only matters for the Windows path-length budget."""
     try:
         templates = organizer_settings['templates']
-        
-        current_filepath = file_obj.filepath
-        
+
         # Get the associated app for the file
         app = file_obj.apps[0] if file_obj.apps else None
         if not app:
             logger.warning(f"No app associated with file {file_obj.filename}. Skipping organization.")
-            return
+            return None
 
         template = _get_template_for_file(file_obj, app, templates)
 
@@ -39,7 +43,7 @@ def organize_file(file_obj, library_path, organizer_settings):
         title_info = titles_lib.get_game_info(app.title.title_id)
         if title_info['name'] == 'Unrecognized':
             logger.warning(f"No title info associated with file {file_obj.filename}. Skipping organization.")
-            return
+            return None
         format_data["extension"] = file_obj.extension
         format_data["titleId"] = app.title.title_id
         format_data["titleName"] = title_info['name']
@@ -59,11 +63,100 @@ def organize_file(file_obj, library_path, organizer_settings):
         format_data = prepare_template_names(format_data, windows_compatible)
         safe_parts = sanitized_path_parts(template.format(**format_data), windows_compatible)
         if sys.platform == 'win32' or windows_compatible:
-            safe_parts = truncate_path_parts(safe_parts, len(library_path))
+            safe_parts = truncate_path_parts(safe_parts, len(root))
         new_relative_path = os.path.join(*safe_parts)
         
-        # Construct the full new path
-        new_full_path = os.path.join(library_path, new_relative_path)
+        return os.path.join(*safe_parts)
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while organizing file {file_obj.filename}: {e}")
+        return None
+
+
+def same_file(path_a, path_b):
+    """True if both paths exist and point to the same file (same path or same inode)."""
+    try:
+        return os.path.samefile(path_a, path_b)
+    except OSError:
+        return False
+
+
+def publish_as(file_obj, link_path):
+    """In hardlink mode the source file keeps its original name on disk, so the database holds
+    the name of the organized link: that is the name the shops publish the file under."""
+    filename = os.path.basename(link_path)
+    if file_obj.filename != filename:
+        update_file_name(file_obj.id, filename)
+
+
+def link_organized_file(file_obj, new_full_path):
+    """Hardlink mode: link the source file under its organized name, never move it.
+
+    The database row keeps pointing at the source file; only Files.filename becomes the
+    published name. The destination is outside every library (enforced by
+    verify_organizer_destination), so the watcher never sees these links and no ignored
+    event is needed."""
+    src = file_obj.filepath
+    new_dir = os.path.dirname(new_full_path)
+    base_name = os.path.splitext(os.path.basename(new_full_path))[0]
+
+    counter = 1
+    candidate = new_full_path
+    while os.path.exists(candidate):
+        if same_file(src, candidate):
+            # Already linked: the organizer runs again on every scan, this must be a no-op
+            publish_as(file_obj, candidate)
+            return True
+        counter += 1
+        candidate = os.path.join(new_dir, f"{base_name}({counter}).{file_obj.extension}")
+
+    try:
+        os.makedirs(new_dir, exist_ok=True)
+        os.link(src, candidate)
+    except OSError as e:
+        if e.errno == errno.EXDEV:
+            logger.error(f"Cannot link '{src}' to '{candidate}': the organizer destination must be "
+                         f"on the same filesystem as the library.")
+        else:
+            logger.error(f"Error linking '{src}' to '{candidate}': {e}")
+        return False
+
+    logger.info(f"Linked '{src}' to '{candidate}'")
+    publish_as(file_obj, candidate)
+    return True
+
+
+def unlink_organized_file(file_obj, organizer_settings):
+    """Hardlink mode: remove the organized link of a file, never the source."""
+    destination = organizer_settings['destination']
+    relative_path = organized_relpath(file_obj, destination, organizer_settings)
+    if relative_path is None:
+        return
+    # The published name is the name of the link, it may carry a (N) duplicate suffix
+    link = os.path.join(destination, os.path.dirname(relative_path), file_obj.filename)
+    if not same_file(file_obj.filepath, link):
+        return
+    try:
+        os.remove(link)
+        logger.info(f"Removed outdated update link: {link}")
+    except OSError as e:
+        logger.error(f"Error removing link {link}: {e}")
+
+
+def organize_file(file_obj, library_path, organizer_settings):
+    try:
+        # A destination means hardlink mode: source files are linked, never moved nor deleted
+        destination = organizer_settings.get('destination')
+        root = destination or library_path
+        new_relative_path = organized_relpath(file_obj, root, organizer_settings)
+        if new_relative_path is None:
+            return
+
+        current_filepath = file_obj.filepath
+        new_full_path = os.path.join(root, new_relative_path)
+
+        if destination:
+            return link_organized_file(file_obj, new_full_path)
 
         if current_filepath == new_full_path:
             return True
@@ -252,6 +345,9 @@ def add_missing_apps_to_db():
 def remove_outdated_update_files():
     logger.info("Starting removal of outdated update files...")
     try:
+        organizer_settings = get_settings()['library']['management']['organizer']
+        # In hardlink mode the source file must keep seeding: only its organized link goes
+        hardlink = organizer_settings['enabled'] and bool(organizer_settings.get('destination'))
         titles = get_all_titles()
         
         for title in titles:
@@ -288,6 +384,10 @@ def remove_outdated_update_files():
                             for file_obj in files_to_process:
                                 # Check if file meets criteria: identified, not multicontent
                                 if file_obj.identified and not file_obj.multicontent:
+                                    if hardlink:
+                                        unlink_organized_file(file_obj, organizer_settings)
+                                        continue
+
                                     logger.info(f"Removing outdated update file: {file_obj.filepath} (App ID: {app_obj.app_id}, Version: {app_obj.app_version}) - Greater owned version available.")
                                     
                                     # Remove from disk
