@@ -64,7 +64,10 @@ behind (see the stale-links note above).
 library path in the settings to force a full pass — `delete_files_by_library()` drops database rows
 only, it never touches the filesystem.
 
-## On the `downloader` branch (not merged): manual downloader
+## Also on `master`: manual downloader
+
+Built on the `downloader` branch, merged into `master` on 2026-08-25 once every part of it had
+been exercised against real trackers.
 
 Searches **Prowlarr** for the content missing from the library and hands the release *you pick* to
 Prowlarr's own download client. Inspired by
@@ -208,15 +211,14 @@ opening a browser at startup, LAN IP on the setup page.
 
 - Image: `ghcr.io/exoenjoi/ownfoil:latest`, public, amd64 + arm64. Rebuilt by GitHub Actions on
   every push to `master` (`.github/workflows/docker.yml`, uses the built-in token, no secret).
-- **`downloader` has no `latest`.** The workflow only auto-builds `master`, so a testable image of
-  the branch comes from pushing a tag: `git tag -a 2.4.0-downloader.N -m '…' && git push origin
-  2.4.0-downloader.N` builds `ghcr.io/exoenjoi/ownfoil:2.4.0-downloader.N` (the workflow's tag
-  filter is `*.*.*`). Bump N, never move an existing tag — the running instance pins one.
+- **A branch has no `latest`.** The workflow only auto-builds `master`, so a testable image of a
+  branch comes from pushing a tag: `git tag -a 2.4.0-<branch>.N -m '…' && git push origin
+  2.4.0-<branch>.N` builds `ghcr.io/exoenjoi/ownfoil:2.4.0-<branch>.N` (the workflow's tag filter
+  is `*.*.*`). Bump N, never move an existing tag — a running instance pins one. `2.4.0-downloader.1`
+  through `.7` were the downloader's.
 - Dropped two upstream-only workflows: the stale-issue bot, and the titledb build — the app pulls
   titledb from upstream's repo (`TITLEDB_ARTEFACTS_URL` in `constants.py`).
 - Sync with upstream: `git fetch upstream && git merge upstream/master`. Watch `upstream/develop`
   for what is coming, but merge only `master` — see the 2.4.0 section above for why.
-- Merge `master` into `downloader` after every UI session. Both touch `app/templates/index.html`,
-  so the conflicts are structural: ten small ones beat one unreadable one.
 - Tests, no framework, no network: `python app/test_organizer.py`, `python app/test_titles.py`,
-  `python app/test_downloader.py` (the last one on the `downloader` branch).
+  `python app/test_downloader.py`. All three live on `master` now.
