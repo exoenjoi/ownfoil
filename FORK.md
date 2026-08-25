@@ -255,7 +255,11 @@ reasoning for anything else small and fork-only: keep it out of files upstream o
   2.4.0-<branch>.N` builds `ghcr.io/exoenjoi/ownfoil:2.4.0-<branch>.N` (the workflow's tag filter
   is `*.*.*`). Bump N, never move an existing tag — a running instance pins one. `2.4.0-downloader.1`
   through `.7` were the downloader's.
-- Dropped two upstream-only workflows: the stale-issue bot, and the titledb build — the app pulls
+- **Dropped `pypi.yml`.** 2.4.0 added a PyPI publish that fires on every `*.*.*` tag — which is
+  every test image this fork builds. In the fork it can only fail (PyPI's trusted publishing is
+  bound to `a1ex4/ownfoil`, so nothing can be published from here), but it fails noisily on every
+  tag, so it is gone. `test.yml` is kept and worth keeping: it runs upstream's suite on every push.
+- Dropped two more upstream-only workflows: the stale-issue bot, and the titledb build — the app pulls
   titledb from upstream's release asset (`TITLEDB_RELEASE_URL` in `constants.py`, upstream's own
   default since 2.4.0).
 - **Sync with upstream: `git fetch upstream && git merge upstream/master`.** This works normally
