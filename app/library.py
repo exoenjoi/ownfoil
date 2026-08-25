@@ -89,6 +89,9 @@ def publish_as(file_obj, link_path):
         update_file_name(file_obj.id, filename)
 
 
+# ponytail: no sweep of the destination folder, so stale links (template changed, source
+# deleted) pile up. Chosen over an automatic sweep, which would have to tell our own links
+# apart from anything else living there. Add one if it becomes a real problem.
 def link_organized_file(file_obj, new_full_path):
     """Hardlink mode: link the source file under its organized name, never move it.
 

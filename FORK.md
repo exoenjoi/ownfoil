@@ -4,7 +4,8 @@ What this fork changes, and *why* it was done that way. The reasoning is the par
 expensive to rediscover — the code itself is in the diff.
 
 Fork of [a1ex4/ownfoil](https://github.com/a1ex4/ownfoil), forked at `7ca28d5` (upstream's last
-commit at the time, 2026-03-25).
+commit at the time, 2026-03-25). Synced with upstream **2.4.0** on 2026-08-25 — read the sync note
+under Operations before fetching, upstream rewrote its history and `7ca28d5` no longer exists there.
 
 ## The setup this fork is built for
 
@@ -35,7 +36,7 @@ Consequences, all deliberate:
 - `Delete older updates` only removes the link, never the source file.
 - **Stale links are not cleaned up.** Changing a template or deleting a source leaves the old link
   behind. Chosen explicitly over an automatic sweep of the destination folder. Marked with a
-  `ponytail:` comment in `process_library_organization()`.
+  `ponytail:` comment on `link_organized_file()` in `library.py`.
 - Fixed a pre-existing bug on the way: Sphaira served files from `Files.folder`, which becomes
   library-relative once a file is organized. It now serves from `Files.filepath`.
 
@@ -50,7 +51,8 @@ the file with the `update` template. That name was the trap: the base and update
 identical, so the file read as a base game and only one hex digit of the app id (`…2000` vs `…2800`)
 said otherwise. Same bug hit an `Incl.All.Dlcs` NSP: base owned, every DLC not.
 
-Fixed by walking the whole container, mirroring the Xci branch. Covered by `app/test_titles.py`.
+Fixed by walking the whole container, mirroring the Xci branch — in `containers/cnmt.py` since the
+2.4.0 sync, where upstream still has the original bug. Covered by `app/test_titles.py`.
 
 **The `update` template now carries `[UPD]`**, so an update is never mistaken for a base game again.
 The marker is safe for the no-keys fallback — neither `\[([0-9A-Fa-f]{16})\]` nor `\[v(\d+)\]` can
@@ -100,11 +102,13 @@ Decisions:
 - **History lives in `config/downloads.json`**, not in a table. See the Alembic note below.
 - `completed` means the library identified the file, not that the torrent finished.
 - **Discover searches titledb, not the library.** A dedicated page finds any base game by name and
-  hands it to the same release modal, so a game you own nothing of is reachable. It scans the
-  titledb already resident in memory rather than building an index: `resolve_target` is decorated
-  `@with_titledb`, so every manual search already pays that load and the scan costs nothing extra.
-  Marked with a `ponytail:` comment naming the exit — upstream 2.4.0 moves titledb into SQL, which
-  turns the scan into a `LIKE` and deletes the question.
+  hands it to the same release modal, so a game you own nothing of is reachable. It used to scan a
+  titledb loaded whole into memory; since 2.4.0 titledb *is* SQLite, so `search_base_games()` (now in
+  `downloader.py`) selects six columns per base game and matches in Python. **Not a `LIKE`**, which
+  was the guess written here before: SQL cannot fold accents or anchor at word starts without a UDF,
+  and folding defeats the index anyway. GraphQL's own `search` argument has the same limit — it is
+  `LIKE %q%`, so `zelda breath of the wild` finds nothing through it. The `@with_titledb` decorator
+  is gone with the load it guarded.
 - **`resolve_target(catalog=True)` skips the `Apps` table entirely.** The flag is explicit rather
   than inferred from a missing row, so the library's own 🔍 keeps its exact behaviour: without it
   nothing on that path changes.
@@ -114,15 +118,18 @@ Decisions:
   top of a base-game search. Tolerable because every grab is a human choice: the modal lists each
   release with its rejection reason and the size, and the user picks.
 - The release modal lives in `templates/release_modal.html`, included by both the library and
-  Discover. `missingContentSearchButton()` stayed in `index.html` — it takes a library group object.
+  Discover. `missingContentSearchButton()` stayed in `index.html`, and since 2.4.0 it takes one of
+  upstream's card models rather than a fork-built group — see the 2.4.0 section.
 - **A Discover card carries `title id · release date · publisher`**, one line, id first so the
   ellipsis eats the publisher rather than the id. Two titledb entries can share a name (the game
   and its KIOSK demo), and the id is what tells them apart before opening the release list. The
   fields come off the record the catalog scan already walked, so the search costs nothing more.
 - **Discover's grid is pinned to 300px tiles** (`#catalogGrid` in `style.css`). It is the only grid
-  with no size slider, and the library's 220px default leaves a 221x124 card whose overlay covers
-  109px of it — the metadata line overflowed and the cover art was gone. 300px is also the slider's
-  second notch, so both grids render identically when the library is set there.
+  with no size slider, and a 220px tile leaves a 221x124 card whose overlay covers 109px of it — the
+  metadata line overflowed and the cover art was gone. It used to match the library slider's second
+  notch exactly; 2.4.0 rebuilt the library grid on Bootstrap columns instead of the `--tile` variable,
+  so the two are no longer the same mechanism and no longer line up. Discover is self-contained and
+  still renders correctly — `.library-grid` and `--tile` in `style.css` are now fork-only.
 - **A release with 0 seeder is dropped in `rank_releases()`, whatever `min_seeders` says.** It is not
   an override the user might want, it is undownloadable. Releases merely *below* `min_seeders` stay,
   greyed out with the reason — that distinction is the point.
@@ -148,72 +155,91 @@ Decisions:
 
 Worth re-reading before touching anything here.
 
-- **No Alembic migrations in this fork, on purpose.** Upstream's chain has a single revision
-  (`78c33e9bffce`). Any revision we add chains from it — and so will upstream's next one, which
-  gives two Alembic *heads* and a hand-written merge revision at every sync. Both features avoided
-  this: the hardlink mode by reusing `Files.filename`, the downloader by using a JSON file.
+- **No Alembic migrations in this fork, on purpose.** Any revision we add chains from upstream's
+  latest — and so will upstream's next one, which gives two Alembic *heads* and a hand-written merge
+  revision at every sync. Both features avoided this: the hardlink mode by reusing `Files.filename`,
+  the downloader by using a JSON file. The 2.4.0 sync proved the bet: upstream added nine revisions
+  in one linear chain and there was nothing to arbitrate.
 - **A new setting must be added to `DEFAULT_SETTINGS`** in `constants.py`, or `remove_obsolete_keys()`
   silently deletes it from `settings.yaml` on the next load.
 - **The settings JS sends whole sub-dicts** and the server does `.update()`, so a key missing from
   the JS payload is wiped on every save.
-- **titledb is loaded on demand and unloaded 30s later.** `load_titledb()` increments a counter but
-  `unload_titledb()` never decrements it — the caller must. Both upstream call sites do it without
-  `try/finally` and leak the counter on any exception; ours uses `try/finally`, with the load
-  *inside* the try since the counter is incremented before the files are opened.
-- **`get_game_info()` is a full linear scan of titledb**, and returns `None` when it is unloaded.
-  Never call it on a request path — that is why the shop cannot compute organized names on the fly.
-- Upstream still runs the **Flask development server** in production. Unfixed, noted.
+- **titledb is a SQLite database** (`config/titles.db`), built from the downloaded JSON by
+  `titledb/store.py` and queried per title id. `get_game_info()` is a cheap indexed lookup, safe on a
+  request path — the reason the shop could not compute organized names on the fly is gone.
+  `titles.py` keeps `get_game_info` and friends as thin re-exports of `titledb.store`.
+- **Upstream has a real test suite**: `python -m pytest tests` — 1390 tests, no network, ~90s. It
+  covers the shop clients against replayed traffic, the organizer paths, the task queue and the
+  GraphQL schema. Run it before and after touching anything: it is a far better check than the
+  fork's three scripts, which only cover what upstream has no test for.
 
 ---
 
-## Upstream: what lands at 2.4.0
+## Upstream 2.4.0: what it actually cost
 
-Surveyed 2026-08-06. **Upstream develops on `develop`, not `master`.** `upstream/master` has not
-moved since `7ca28d5` (2026-03-25, our fork point) — it only advances at releases. `develop` is
-122 commits ahead, `+5768/-1401` over 51 files. So `git merge upstream/master` returns nothing for
-months, then a whole release at once. The quiet is an illusion, not a dead project.
+Merged 2026-08-25. The 2026-08-06 survey of this release, made while it was still on `develop`, was
+right about nearly everything; what follows keeps only what is still worth knowing, and is explicit
+about the two things the survey got wrong.
 
-**Do not track `develop`.** The foundations it reworks are the exact ones both features hook into,
-and they are still moving. Porting onto them now means porting twice. Wait for 2.4.0 on `master`.
+**The survey was wrong about `index.html`.** It said `develop` did not touch it, so the UI would
+merge clean. 2.4.0 rewrote it: the library is now GraphQL-driven and paginated, and `library.json`
+is gone. That was the largest single re-port of the merge — and it *deleted* fork code rather than
+moving it. `apps(groupByAppId: true)` groups by title server side, sorted and filtered, so the
+fork's browser-side `groupTitles()` went with the cache file it was built on. Upstream's
+`cardModel()` already carries `ownership.haveBase` and `upToDate`, which is everything the 🔍 badge
+needs, so `missingContentSearchButton()` is now a dozen lines reading that model.
 
-**Cost, in order of attack. Start with the organizer** — it is what decides whether the merge is
-feasible at all; the rest is bookkeeping.
+**The survey was wrong about a `LIKE`** — see the Discover note above.
 
-| Area | Effort |
-|---|---|
-| `index.html`, downloader-only files, Alembic | **none.** `develop` does not touch `index.html` at all, so the UI rework merges clean. And the no-migration bet pays: we added zero revisions, so upstream's four new ones chain under `78c33e9bffce` with no second head |
-| `add_missing_apps_to_db()` (moved to `library.py`), deleted workflows | minutes — imports, modify/delete conflicts |
-| `app.py`, `settings.py` (191 lines changed), `settings.html` (240) | tedious, line-by-line |
-| titledb calls in the downloader | rewrite against the new API |
-| **hardlink organizer** | **full re-port**, see below |
+**It was right about the organizer.** `process_library_organization()` is gone; organizing is
+`organize_file()` in `library.py`, driven per file by the task queue in `tasks.py`. The hardlink
+branch was re-ported, not merged: git had no conflict to offer, the function it patched simply no
+longer existed.
 
-**The organizer was rewritten.** `process_library_organization()` no longer exists. Organizing lives
-in `organize_file()` (`library.py`), driven by `organize_library_task` / `organize_file_task` in the
-new task queue, and every row now carries `Files.organized`. Our hardlink patch is grafted onto a
-function that is gone — git will not hand us a conflict to arbitrate, the block simply vanished.
-Open question to settle then: what `organized` means when the source file never moves.
+- `organized_relpath()` factors out the template computation so `unlink_organized_file()` can reuse
+  it. It takes the root it is relative to, because the Windows path-length budget is measured from
+  the organizer destination in hardlink mode, not from the library.
+- **`Files.organized` means "has been placed", not "has been moved".** That was the open question
+  the survey left. In hardlink mode it is set once the link exists; it is what stops
+  `_needs_organize()` running the organizer again on every pass. `reset_files_organized()` re-links
+  everything, which is the intended way to re-place after a template change.
+- `library_maintenance` no longer prunes empty folders in hardlink mode, and
+  `remove_outdated_update_files()` unlinks instead of deleting the source.
 
-**Keep NSZ compression off.** The headline feature of 2.4.0 (9 commits: compress, verify
-bit-identical, live progress, settings UI) rewrites files in place, and the pipeline chains
-organize → compress (`tasks.py`, *"organize_file re-triggers compression once placed"*). Our files
-must keep seeding — see the constraint at the top of this file. It is opt-in and off by default, so
-the real risk is enabling it out of curiosity later, having forgotten why not.
+**It was right about Alembic.** The no-migration bet paid exactly as predicted: upstream's nine new
+revisions form one linear chain under `78c33e9bffce`, we added none, so there was no second head and
+nothing to merge. Keep it that way.
 
-**What we gain — more than bug fixes.** This release *simplifies* the fork:
+**Compression stays off, forever.** It rewrites files in place and the pipeline chains
+organize → compress. Our files must keep seeding — see the constraint at the top of this file. It is
+off by default upstream too, so the real risk is enabling it out of curiosity later, having
+forgotten why not. **Verification, on the other hand, is on**: it only reads and hashes, which is
+safe for seeding files, and it sorts the library into `valid` / `repack` / `modified` / `corrupt`.
 
-- **titledb moved into SQL (#318).** `get_game_info()` became a shim over a SQL lookup, and
-  `load_titledb()` / `unload_titledb()` are gone. Two notes above become obsolete, our defensive
-  `try/finally` around the leaking counter can be deleted, and the shop *can* compute organized
-  names on the fly after this.
-- **Task queue + Gunicorn.** Parallel scans, configurable workers, per-group concurrency caps,
-  stoppable tasks — and the Flask development server finally replaced.
-- **Six organizer fixes** in our exact area: duplicate renaming, duplicate handling, a regression,
-  filenames, multicontent removal, leftovers when deleting a library.
-- Upstream also fixed Sphaira twice, but for other causes (reverse-proxy client detection, and an
-  organizer bug). Our `folder` → `filepath` fix looks distinct and still needed — verify, don't assume.
+**What the merge deleted from the fork**, all of it obsolete rather than dropped:
 
-Irrelevant to us, all Docker-shaped concerns: pip/uv packaging, PyPI publish, Windows path limits,
-opening a browser at startup, LAN IP on the setup page.
+- `load_titledb()` / `unload_titledb()` / the `with_titledb` decorator and the defensive
+  `try/finally` around their leaking counter — titledb is a database now.
+- `groupTitles()` and the whole client-side grouping.
+- `place_file()`, replaced by `link_organized_file()`.
+
+**What moved, to stop being conflict surface.** Upstream removed `safe_write_json()` from `utils.py`
+along with `library.json`, and `is_app_owned()` was ours in `db.py`. Both now live in the fork's own
+files (`downloads_store.py`, `downloader.py`), where the next sync cannot collide with them. Same
+reasoning for anything else small and fork-only: keep it out of files upstream owns.
+
+**Things that changed under us, worth knowing:**
+
+- `get_cnmts()` moved to `containers/cnmt.py` and now **raises** instead of returning `[]`. Upstream
+  did *not* fix the merged-NSP bug, so our walk of the whole container was re-applied there.
+- Upstream fixed Sphaira twice, both for other causes. Our `folder` → `filepath` fix is still needed
+  and still distinct: upstream still serves from `Files.folder`.
+- `scheduler.scan_interval` was renamed `titledb_update_interval`.
+- Titledb now comes from a GitHub release asset (`TITLEDB_RELEASE_URL`), which is what the fork
+  already wanted — our `TITLEDB_ARTEFACTS_URL` override is gone and that divergence with it.
+- The Flask development server is finally gone: Gunicorn plus a worker pool, started by `app/run.py`.
+- Downloads moved to `/admin/downloads`, in upstream's new admin sidebar next to Tasks and Stats.
+  Discover stayed a top-level page.
 
 ## Operations
 
@@ -230,8 +256,31 @@ opening a browser at startup, LAN IP on the setup page.
   is `*.*.*`). Bump N, never move an existing tag — a running instance pins one. `2.4.0-downloader.1`
   through `.7` were the downloader's.
 - Dropped two upstream-only workflows: the stale-issue bot, and the titledb build — the app pulls
-  titledb from upstream's repo (`TITLEDB_ARTEFACTS_URL` in `constants.py`).
-- Sync with upstream: `git fetch upstream && git merge upstream/master`. Watch `upstream/develop`
-  for what is coming, but merge only `master` — see the 2.4.0 section above for why.
-- Tests, no framework, no network: `python app/test_organizer.py`, `python app/test_titles.py`,
-  `python app/test_downloader.py`. All three live on `master` now.
+  titledb from upstream's release asset (`TITLEDB_RELEASE_URL` in `constants.py`, upstream's own
+  default since 2.4.0).
+- **Sync with upstream: `git fetch upstream && git merge upstream/master`.** This works normally
+  again. Watch `upstream/develop` for what is coming, but merge only `master`: upstream develops on
+  `develop` and only advances `master` at a release, so `master` looks frozen for months and then
+  moves by a whole release at once. The quiet is an illusion, not a dead project.
+- **Upstream rewrote its entire history before 2.4.0** (`git fetch` logged a `forced-update`, and
+  the root commit changed). For that one merge `git merge-base` returned nothing and git refused to
+  merge unrelated histories. The fork point still existed on both sides under different hashes —
+  identical tree objects proved it, our `7ca28d5` == upstream `3a1c2df` — so the merge was made
+  possible by a temporary graft:
+
+  ```sh
+  git replace 7ca28d5 3a1c2df    # only needed for the 2.4.0 merge
+  git merge upstream/master
+  git replace -d 7ca28d5
+  ```
+
+  **This is history, not a procedure.** The 2.4.0 merge commit records `upstream/master` as a real
+  parent, so there is a common ancestor again and no graft is needed any more. If upstream ever
+  force-pushes another rewrite, the recipe is: find the commit on each side with the same tree
+  (`git rev-parse <c>^{tree}`), graft, merge, drop the graft.
+- Tests. Upstream's suite first — `python -m pytest tests`, 1390 tests, ~90s, no network. Then the
+  fork's three, which cover only what upstream does not: `python app/test_organizer.py`,
+  `python app/test_titles.py`, `python app/test_downloader.py`.
+- Running it locally: `cd app && python run.py` (Gunicorn + workers, port 8465). `OWNFOIL_CONFIG_DIR`
+  redirects the config away from the real one; the titledb download lands in `app/data/` regardless,
+  which is 168 MB and gitignored.

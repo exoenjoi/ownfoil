@@ -196,6 +196,9 @@ def _fold(text):
     return ''.join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
 
+# ponytail: still a linear scan, of ~60k short rows instead of the whole JSON catalogue -
+# fast enough that the query is not worth indexing. If it ever drags, add a folded-name
+# column to titles.db at import time and this becomes an indexed LIKE.
 # The whole catalogue used to be loaded into memory to be scanned. Since 2.4.0 titledb is
 # SQLite, so this reads two dozen bytes per base game instead and matches in Python -
 # SQL's LIKE cannot fold accents or anchor at word starts without a UDF, and the fold
