@@ -41,11 +41,14 @@ DEFAULT_SETTINGS = {
             "delete_older_updates": False,
             "organizer": {
                 "enabled": False,
+                "destination": "",
                 "remove_empty_folders": False,
                 "windows_compatible": False,
                 "templates": {
                     "base": "{titleName}/{titleName} [{appId}][v{appVersion}]",
-                    "update": "{titleName}/{titleName} [{appId}][v{appVersion}]",
+                    # [UPD] because otherwise an update is named exactly like its base game,
+                    # and only one hex digit of the app id (…2000 vs …2800) tells them apart.
+                    "update": "{titleName}/{titleName} [UPD][{appId}][v{appVersion}]",
                     "dlc": "{titleName}/{appName} [{appId}][v{appVersion}]",
                     "multi": "{titleName}/{titleName} [{titleId}]"
                 }
@@ -82,6 +85,26 @@ DEFAULT_SETTINGS = {
         "count": 2,
         "group_limits": {
             "io": 1,
+        },
+    },
+    "downloader": {
+        "prowlarr": {
+            "url": "",
+            "api_key": "",
+            # No standard Newznab category exists for the Switch, so no filter by default:
+            # filtering would silently return nothing on most indexers
+            "categories": [],
+        },
+        "qbittorrent": {
+            # Optional, read only: Prowlarr adds the torrents, this is just for progress
+            "url": "",
+            "username": "",
+            "password": "",
+        },
+        "filters": {
+            "min_seeders": 3,
+            "preferred_ext": ["nsz", "nsp", "xcz", "xci"],
+            "max_size_gb": 0,
         },
     }
 }

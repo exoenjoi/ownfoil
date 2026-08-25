@@ -262,9 +262,58 @@ def add_library_path_to_settings(path):
         _dump_settings(settings)
     return success, errors
 
+def verify_organizer_destination(destination, library_paths):
+    """The organizer destination holds hardlinks to the library files, it must exist and must
+    not be scanned as a library, otherwise every link would be added again as a new file."""
+    if not destination:
+        return True, []
+    error = None
+    if not os.path.isdir(destination):
+        error = f"Path {destination} does not exists."
+    else:
+        destination_path = os.path.realpath(destination)
+        for library_path in library_paths or []:
+            real_library_path = os.path.realpath(library_path)
+            try:
+                common = os.path.commonpath([destination_path, real_library_path])
+            except ValueError:
+                continue
+            if common in (destination_path, real_library_path):
+                error = (f"Path {destination} overlaps with library {library_path}, the organizer "
+                         f"destination must be outside of every library.")
+                break
+    if error is None:
+        return True, []
+    return False, [{
+        'path': 'library/management/organizer/destination',
+        'error': error
+    }]
+
 def set_library_management_settings(data):
+    destination = data.get('organizer', {}).get('destination', '').strip()
+    success, errors = verify_organizer_destination(destination, get_library_paths())
+    if not success:
+        return success, errors
+    if 'organizer' in data:
+        data['organizer']['destination'] = destination
     with settings_transaction() as settings:
         settings['library']['management'].update(data)
+    return True, []
+
+# Secrets are blanked out by GET /api/settings, so an empty value means "keep the
+# stored one" instead of "erase it"
+DOWNLOADER_SECRETS = (('prowlarr', 'api_key'), ('qbittorrent', 'password'))
+
+def set_downloader_settings(data):
+    for section, key in DOWNLOADER_SECRETS:
+        if not (data.get(section, {}).get(key) or '').strip():
+            data.get(section, {}).pop(key, None)
+    with settings_transaction() as settings:
+        for section, section_data in data.items():
+            if isinstance(section_data, dict):
+                settings['downloader'].setdefault(section, {}).update(section_data)
+            else:
+                settings['downloader'][section] = section_data
 
 def get_watcher_config():
     """Return the global file watcher config, merged over defaults."""

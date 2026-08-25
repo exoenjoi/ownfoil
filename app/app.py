@@ -22,6 +22,10 @@ import realtime
 import titledb
 import os
 from clients import CyberFoilClient, TinfoilClient, SphairaClient
+import downloader as downloader_lib
+import downloads_store
+import prowlarr
+import qbittorrent
 
 def init():
     global watcher
@@ -269,6 +273,18 @@ def tasks_page():
                            max_tasks=task_events.MAX_TASKS,
                            admin_account_created=admin_account_created())
 
+@app.route('/admin/downloads')
+@access_required('admin')
+def downloads_page():
+    return render_template('downloads.html', title='Downloads',
+                           admin_account_created=admin_account_created())
+
+@app.route('/discover')
+@access_required('admin')
+def discover_page():
+    return render_template('discover.html', title='Discover',
+                           admin_account_created=admin_account_created())
+
 @app.route('/admin/stats')
 @access_required('admin')
 def stats_page():
@@ -339,6 +355,12 @@ def get_settings_api():
             if 'hauth' in client_settings:
                 # Replace hauth dict with empty dict to keep it private
                 settings['shop']['clients'][client_name]['hauth'] = {}
+    # Same for the downloader secrets, with a flag so the UI can show they are set
+    for section, key in DOWNLOADER_SECRETS:
+        section_settings = settings.get('downloader', {}).get(section)
+        if section_settings is not None and key in section_settings:
+            section_settings[f'{key}_set'] = bool(section_settings[key])
+            section_settings[key] = ''
     return jsonify(settings)
 
 @app.post('/api/settings/titles')
@@ -423,7 +445,9 @@ def set_library_watcher_settings_api():
 @access_required('admin')
 def set_library_management_settings_api():
     data = request.json
-    set_library_management_settings(data)
+    success, errors = set_library_management_settings(data)
+    if not success:
+        return jsonify({'success': False, 'errors': errors})
     tasks_mod.enqueue_task('process_library')
     resp = {
         'success': True,
@@ -481,6 +505,102 @@ def set_worker_settings_api():
         data['group_limits'] = {**current, 'io': io}
     set_worker_settings(data)
     return jsonify({'success': True, 'errors': []})
+
+# ---------------------------------------------------------------- downloader (fork)
+
+@app.post('/api/settings/downloader')
+@access_required('admin')
+def set_downloader_settings_api():
+    data = request.json or {}
+    prowlarr_url = (data.get('prowlarr', {}).get('url') or '').strip()
+    if not prowlarr_url:
+        return jsonify({
+            'success': False,
+            'errors': [{'path': 'downloader/prowlarr/url',
+                        'error': 'A Prowlarr URL is required.'}]
+        })
+
+    set_downloader_settings(data)
+    return jsonify({'success': True, 'errors': []})
+
+@app.post('/api/downloader/test')
+@access_required('admin')
+def test_downloader_api():
+    downloader_settings = get_settings().get('downloader', {}) or {}
+    prowlarr_ok, prowlarr_msg = prowlarr.test_connection(downloader_settings.get('prowlarr', {}) or {})
+    qbt_ok, qbt_msg = qbittorrent.test_connection(downloader_settings.get('qbittorrent', {}) or {})
+    return jsonify({
+        'prowlarr': {'success': prowlarr_ok, 'message': prowlarr_msg},
+        'qbittorrent': {'success': qbt_ok, 'message': qbt_msg},
+    })
+
+@app.get('/api/downloader/status')
+@access_required('admin')
+def downloader_status_api():
+    return jsonify({'downloads': downloader_lib.sync_status(get_settings())})
+
+@app.post('/api/downloader/search')
+@access_required('admin')
+def search_downloader_api():
+    data = request.json or {}
+    try:
+        target = downloader_lib.resolve_target(data.get('app_id'), data.get('app_version'),
+                                               data.get('title_id'),
+                                               catalog=bool(data.get('catalog')))
+    except FileNotFoundError:
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'TitleDB is not available yet, scan the library first.'}]})
+    if target is None:
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'Unknown app, or no title info for it.'}]})
+    return jsonify({
+        'success': True,
+        'errors': [],
+        'target': target,
+        'releases': downloader_lib.search_releases(target, get_settings()),
+    })
+
+CATALOG_SEARCH_LIMIT = 60
+
+@app.post('/api/catalog/search')
+@access_required('admin')
+def search_catalog_api():
+    query = ((request.json or {}).get('query') or '').strip()
+    # Two characters is the floor: one letter matches most of the catalog and the
+    # query is wasted work.
+    if len(query) < 2:
+        return jsonify({'success': True, 'errors': [], 'results': [], 'truncated': False})
+    try:
+        found = downloader_lib.search_catalog(query, CATALOG_SEARCH_LIMIT)
+    except FileNotFoundError:
+        found = None
+    if found is None:
+        return jsonify({'success': False, 'errors': [
+            {'path': 'catalog', 'error': 'TitleDB is not available yet, scan the library first.'}]})
+    return jsonify({'success': True, 'errors': [], **found})
+
+@app.post('/api/downloader/grab')
+@access_required('admin')
+def grab_downloader_api():
+    data = request.json or {}
+    # The target comes straight back from the search, so the grab records exactly what
+    # the user was shown rather than re-resolving to a possibly different app
+    target = data.get('target') or {}
+    release = data.get('release') or {}
+    if not target.get('app_id') or not release.get('guid'):
+        return jsonify({'success': False, 'errors': [
+            {'path': 'downloader', 'error': 'Missing target or invalid release.'}]})
+    success, error = downloader_lib.grab_release(target, release, get_settings())
+    return jsonify({
+        'success': success,
+        'errors': [] if success else [{'path': 'downloader', 'error': error}]
+    })
+
+@app.delete('/api/downloader/<int:download_id>')
+@access_required('admin')
+def delete_download_api(download_id):
+    return jsonify({'success': downloads_store.delete(download_id), 'errors': []})
+
 
 @app.post('/api/upload')
 @access_required('admin')
