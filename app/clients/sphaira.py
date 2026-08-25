@@ -91,7 +91,8 @@ class SphairaClient(BaseClient):
             library = Libraries.query.filter_by(id=file.library_id).first()
             
             library_path = library.path.rstrip('/' + os.sep)
-            file_path = file.filepath
+            # Published name, which differs from the name on disk in hardlink mode
+            file_path = os.path.join(os.path.dirname(file.filepath), file.filename)
 
             # Strip library path to get relative path, in the url form the listing is built in:
             # filepaths come off the filesystem in its own separator.
@@ -145,10 +146,12 @@ class SphairaClient(BaseClient):
             # Throws NspBadMagic for HEAD requests anyway
             return self.error_response("File not found")
 
-        self.log_info(f"Serving file: {file.folder}/{filename}")
+        self.log_info(f"Serving file: {file.filepath}")
         # Count only once the response exists: a range past the end of the file raises out
         # of here, and a transfer that never happened is not a download.
-        response = send_from_directory(file.folder, filename)
+        # Serve from the real path: it is the only one guaranteed to exist on disk, since
+        # in hardlink mode `filename` is the name of the link, not of the source file.
+        response = send_from_directory(*os.path.split(file.filepath))
         increment_download_count_throttled(file.filepath, client_address(request))
 
         return response
