@@ -46,8 +46,16 @@ def test_connection(settings):
 def _release(item):
     """Normalize a Prowlarr ReleaseResource into the fields we care about."""
     seeders = int(item.get('seeders') or 0)
+    guid = item.get('guid') or ''
+    # Most indexers put their details page in infoUrl; the rest use the page URL as the
+    # guid itself. Anything that is not plain http(s) makes no link: a guid is often just
+    # an internal id, and the value lands in an href of a page we serve.
+    info_url = item.get('infoUrl') or guid
+    if not info_url.startswith(('http://', 'https://')):
+        info_url = ''
     return {
-        'guid': item.get('guid') or '',
+        'guid': guid,
+        'info_url': info_url,
         'indexer_id': item.get('indexerId'),
         'indexer': item.get('indexer') or '',
         'title': item.get('title') or '',

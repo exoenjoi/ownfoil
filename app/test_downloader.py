@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import downloader
 import downloads_store as store
+import prowlarr
 from downloader import best_release, rank_releases
 
 FILTERS = {'min_seeders': 3, 'preferred_ext': ['nsz', 'nsp', 'xcz', 'xci'],
@@ -51,6 +52,16 @@ def test_base_game_is_never_taken_for_an_update():
     chosen, reason = best(['Mario Kart 8 Deluxe NSW-VENOM.nsp'])
     assert chosen is None
     assert 'version marker' in reason
+
+
+def test_a_release_carries_a_link_to_its_tracker_page():
+    # Prowlarr fills infoUrl; when it does not, the guid is often the page URL itself.
+    assert prowlarr._release({'infoUrl': 'https://tracker/1'})['info_url'] == 'https://tracker/1'
+    assert prowlarr._release({'guid': 'https://tracker/2'})['info_url'] == 'https://tracker/2'
+    # A guid that is not a URL is not a link, it is an indexer's internal id.
+    assert prowlarr._release({'guid': 'abcd-1234'})['info_url'] == ''
+    # The link goes into an href, and an indexer is not a party we trust with a scheme.
+    assert prowlarr._release({'infoUrl': 'javascript:alert(1)'})['info_url'] == ''
 
 
 def test_a_super_dump_keeps_its_extension():

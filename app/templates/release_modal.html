@@ -56,7 +56,10 @@
         const rows = releaseSearchResults.map((release, index) => {
             const rejected = release.rejected;
             return `<tr class="${rejected ? 'opacity-50' : ''}">
-                <td class="small">${escapeHtml(release.title)}
+                <td class="small">${release.info_url
+                        ? `<a href="${encodeURI(release.info_url)}" target="_blank" rel="noopener noreferrer"
+                             class="link-body-emphasis">${escapeHtml(release.title)}</a>`
+                        : escapeHtml(release.title)}
                     ${rejected ? `<div class="text-warning">${escapeHtml(rejected)}</div>` : ''}</td>
                 <td class="small text-nowrap">${escapeHtml(release.indexer)}</td>
                 <td class="small text-nowrap">${humanSize(release.size)}</td>
@@ -67,8 +70,8 @@
             </tr>`;
         });
         $('#releaseSearchBody').html(`
-            <p class="text-body-secondary small">Greyed out releases are the ones the automatic job would refuse,
-            with the reason. You can still grab them.</p>
+            <p class="text-body-secondary small">Greyed out releases are the ones that failed a filter, with the
+            reason. You can still grab them. The name links to the release on its tracker.</p>
             <div class="table-responsive"><table class="table table-sm table-hover align-middle">
                 <thead><tr>
                     ${sortableHeader('Release', 'title')}
