@@ -40,7 +40,7 @@
 - Consumes: nothing.
 - Produces: `rank_releases(releases, target, filters)` keeps its signature and return shape — a list of annotated release dicts — but never returns one whose `seeders` is 0.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `app/test_downloader.py`, before the `if __name__ == '__main__':` block:
 
@@ -74,12 +74,12 @@ def test_a_dead_torrent_is_dropped_even_with_no_minimum():
     assert [r['guid'] for r in ranked] == ['thin']
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `/Users/jalbert/claude-code/ownfoil/.venv/bin/python app/test_downloader.py`
 Expected: FAIL on `test_a_dead_torrent_is_dropped_not_greyed` — the dead release is still in the list.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `app/downloader.py`, inside `rank_releases`, replace the start of the loop body:
 
@@ -117,7 +117,7 @@ Then find the `return` at the end of `rank_releases` and add the log immediately
         logger.info(f'[downloader] Ignored {dead} release(s) with no seeder.')
 ```
 
-- [ ] **Step 4: Run the whole suite to verify it passes**
+- [x] **Step 4: Run the whole suite to verify it passes**
 
 Run:
 ```bash
@@ -127,7 +127,7 @@ Run:
 ```
 Expected: every line prefixed `ok `. The pre-existing downloader tests must still pass — if one now fails because its fixture had `seeders=0`, that fixture was relying on the old behaviour: give it a non-zero value rather than weakening the guard.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/downloader.py app/test_downloader.py
@@ -151,7 +151,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `rank_releases` output from Task 1; each release dict carries `publish_date` already, produced by `prowlarr._release()` (`app/prowlarr.py:59`).
 - Produces: `sortReleases(key)` as a global function, called from the `onClick` of each sortable header.
 
-- [ ] **Step 1: Add the sort state**
+- [x] **Step 1: Add the sort state**
 
 At the top of the `<script>` in `app/templates/release_modal.html`, next to `let releaseSearchResults = [];`, add:
 
@@ -166,7 +166,7 @@ And in `openReleaseSearch`, next to the existing `releaseSearchResults = [];` re
         releaseSort = {key: null, dir: 1};
 ```
 
-- [ ] **Step 2: Add the sort function**
+- [x] **Step 2: Add the sort function**
 
 Add after `renderReleaseSearch()`:
 
@@ -191,7 +191,7 @@ Add after `renderReleaseSearch()`:
     }
 ```
 
-- [ ] **Step 3: Render the date column and the clickable headers**
+- [x] **Step 3: Render the date column and the clickable headers**
 
 In `renderReleaseSearch`, replace the row template (lines 53-64) so it gains a date cell after the S/L cell:
 
@@ -233,7 +233,7 @@ Add this helper next to `sortReleases`:
     }
 ```
 
-- [ ] **Step 4: Make the empty message honest**
+- [x] **Step 4: Make the empty message honest**
 
 Line 50 currently reads `'<div class="alert alert-warning">Prowlarr returned no result for this search.</div>'`. With dead torrents dropped server-side that sentence can be false, so replace the text with:
 
@@ -241,7 +241,7 @@ Line 50 currently reads `'<div class="alert alert-warning">Prowlarr returned no 
                 '<div class="alert alert-warning">No usable release found.</div>');
 ```
 
-- [ ] **Step 5: Verify the templates parse and the suite is green**
+- [x] **Step 5: Verify the templates parse and the suite is green**
 
 Run:
 ```bash
@@ -256,7 +256,7 @@ print('templates parse')
 ```
 Expected: `templates parse`, then every test line prefixed `ok `.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/templates/release_modal.html
@@ -277,13 +277,13 @@ The sorting is JavaScript and this project has no JS test framework, so it gets 
 **Files:**
 - Create: a build script in the session scratchpad directory (not in the repo)
 
-- [ ] **Step 1: Build a standalone preview**
+- [x] **Step 1: Build a standalone preview**
 
 Write a script in the scratchpad that reads `app/templates/release_modal.html`, wraps it in a minimal HTML document with jQuery and Bootstrap from their CDNs, defines `releaseSearchTarget` and `releaseSearchResults` with six fake releases of varying `size`, `seeders`, `publish_date` and `title`, calls `renderReleaseSearch()`, and shows the modal. Serve it with `python -m http.server`; Playwright refuses `file:` URLs.
 
 Give at least one fake release a `rejected` reason so the greyed-out styling is exercised, and one an empty `publish_date` so the date cell's fallback is exercised.
 
-- [ ] **Step 2: Assert the sort works**
+- [x] **Step 2: Assert the sort works**
 
 With Playwright, evaluate on the page:
 
@@ -292,11 +292,11 @@ With Playwright, evaluate on the page:
 - clicking `Date` orders by date;
 - **after sorting, the `onClick="grabRelease(N, this)"` index on each row still points at the release whose title is rendered in that row.** This is the regression the whole task exists to catch: stub `grabRelease` to record the index it receives, click the Grab button of a known row, and assert `releaseSearchResults[recordedIndex].title` equals the title shown in that row.
 
-- [ ] **Step 3: Take a screenshot and look at it**
+- [x] **Step 3: Take a screenshot and look at it**
 
 Screenshot the modal and read the image. The DOM assertions cannot see a column overflowing the dialog or a caret rendering as a broken glyph.
 
-- [ ] **Step 4: Record the outcome**
+- [x] **Step 4: Record the outcome**
 
 If anything failed, fix it and re-run Steps 2-3 before continuing. Report to the user what the assertions covered and attach what the screenshot showed.
 

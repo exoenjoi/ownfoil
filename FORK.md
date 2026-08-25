@@ -106,6 +106,12 @@ Decisions:
   release with its rejection reason and the user picks.
 - The release modal lives in `templates/release_modal.html`, included by both the library and
   Discover. `missingContentSearchButton()` stayed in `index.html` — it takes a library group object.
+- **A release with 0 seeder is dropped in `rank_releases()`, whatever `min_seeders` says.** It is not
+  an override the user might want, it is undownloadable. Releases merely *below* `min_seeders` stay,
+  greyed out with the reason — that distinction is the point.
+- **The modal's column sort mutates `releaseSearchResults` in place.** `grabRelease(index)` looks its
+  release up by index in that array, so sorting a copy would grab the wrong release. Verified in a
+  browser (stubbed ajax, clicked a row after sorting, compared the grabbed title to the row's).
 
 ---
 
