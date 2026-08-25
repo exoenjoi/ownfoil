@@ -19,6 +19,13 @@
     align-items: start;
 }
 
+/* Discover has no tile-size slider, and its cards carry a line of metadata the
+   library's do not: at the 220px default the title id is cut in half. min() keeps a
+   narrow screen from overflowing — the column shrinks below 320px instead. */
+#catalogGrid {
+    --tile: min(320px, 100%);
+}
+
 .library-grid.view-list {
     grid-template-columns: 1fr;
     gap: .5rem;
