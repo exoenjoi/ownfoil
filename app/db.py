@@ -1,10 +1,11 @@
-from flask import send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import create_engine
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy.dialects.sqlite import insert  # Use postgresql if using PostgreSQL
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.sqlite import insert
 from flask_migrate import Migrate, upgrade
 from alembic.runtime.migration import MigrationContext
 from alembic.config import Config
@@ -17,12 +18,66 @@ import logging
 import datetime
 from constants import *
 from utils import throttle
+import titledb
 
 # Retrieve main logger
 logger = logging.getLogger('main')
 
 db = SQLAlchemy()
 migrate = Migrate()
+
+
+def _titledb_signature():
+    try:
+        st = os.stat(TITLES_DB_FILE)
+        return (st.st_dev, st.st_ino)
+    except FileNotFoundError:
+        return None
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA busy_timeout=30000")
+
+    rows = cursor.execute("PRAGMA database_list").fetchall()
+    main_path = next((r[2] for r in rows if r[1] == 'main'), None)
+    is_main = bool(
+        main_path and os.path.realpath(main_path) == os.path.realpath(DB_FILE)
+    )
+    if is_main:
+        # Main-db only: titles.db is os.replace'd and read back through `mode=ro` connections,
+        # and SQLite cannot open a WAL database read-only without an existing -shm. Keep the
+        # schema qualifier too - unqualified, the pragma applies to attached databases as well.
+        cursor.execute("PRAGMA main.journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    connection_record.info['is_main_db'] = is_main
+    connection_record.info['titledb_signature'] = None
+    cursor.close()
+
+
+@event.listens_for(Engine, "checkout")
+def _sync_titledb_attach(dbapi_connection, connection_record, connection_proxy):
+    # Keep `titledb` ATTACH state in sync with the on-disk titles.db inode.
+    # Handles two cases the connect-time ATTACH cannot: titles.db not yet
+    # built when the connection was opened, and atomic replacement of
+    # titles.db by another process (the new inode replaces the old one).
+    info = connection_record.info
+    if not info.get('is_main_db'):
+        return
+    current_sig = _titledb_signature()
+    if current_sig == info.get('titledb_signature'):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        if info.get('titledb_signature') is not None:
+            cursor.execute("DETACH DATABASE titledb")
+        if current_sig is not None:
+            cursor.execute("ATTACH DATABASE ? AS titledb", (TITLES_DB_FILE,))
+        info['titledb_signature'] = current_sig
+    finally:
+        cursor.close()
 
 # Alembic functions
 def get_alembic_cfg():
@@ -32,10 +87,15 @@ def get_alembic_cfg():
 
 def get_current_db_version():
     engine = create_engine(OWNFOIL_DB)
-    with engine.connect() as connection:
-        context = MigrationContext.configure(connection)
-        current_rev = context.get_current_revision()
-        return current_rev or '0'
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            current_rev = context.get_current_revision()
+            return current_rev or '0'
+    finally:
+        # Undisposed, this pool keeps a connection with titles.db ATTACHed for the whole
+        # process, which can defeat the replace at the end of a titledb import on Windows.
+        engine.dispose()
     
 def create_db_backup():
     current_revision = get_current_db_version()
@@ -82,8 +142,52 @@ class Files(db.Model):
     identification_error = db.Column(db.String)
     identification_attempts = db.Column(db.Integer, default=0)
     last_attempt = db.Column(db.DateTime, default=datetime.datetime.now())
+    organized = db.Column(db.Boolean, default=False)
+    signature_valid = db.Column(db.Boolean)
+    hash_valid = db.Column(db.Boolean)
+    hash_modified = db.Column(db.Boolean)
+    verification_error = db.Column(db.String)
+    verified_at = db.Column(db.DateTime)
+    mtime = db.Column(db.Float)
+    # When ownfoil first saw the file. Distinct from mtime, which a re-organize or a
+    # copy rewrites - only this one can answer "recently added".
+    added_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     library = db.relationship('Libraries', backref=db.backref('files', lazy=True, cascade="all, delete-orphan"))
+
+# Durable home of the title metadata that isn't downloaded: user-authored ('custom') and,
+# later, extracted from the files themselves ('extract'). Sparse - a row only sets the
+# fields that source knows about. titles.db is disposable and gets these projected into it
+# on every rebuild, which is why they live here instead. Core table, not a model: it has
+# no ORM relationships and its columns come from the titledb schema.
+title_overrides = db.Table(
+    'title_overrides', db.metadata,
+    db.Column('id', db.String, primary_key=True),
+    db.Column('source', db.String, primary_key=True),
+    *titledb.schema.metadata_columns(),
+)
+
+
+def list_title_overrides(source):
+    rows = db.session.execute(
+        title_overrides.select().where(title_overrides.c.source == source)).all()
+    return [dict(row._mapping) for row in rows]
+
+
+def upsert_title_override(title_id, source, values):
+    stmt = insert(title_overrides).values(id=title_id, source=source, **values)
+    db.session.execute(stmt.on_conflict_do_update(
+        index_elements=['id', 'source'], set_=values))
+    db.session.commit()
+
+
+def delete_title_override(title_id, source):
+    """Delete an override row. Returns False when there was nothing to delete."""
+    result = db.session.execute(title_overrides.delete().where(
+        (title_overrides.c.id == title_id) & (title_overrides.c.source == source)))
+    db.session.commit()
+    return bool(result.rowcount)
+
 
 class Titles(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -92,10 +196,13 @@ class Titles(db.Model):
     up_to_date = db.Column(db.Boolean, default=False)
     complete = db.Column(db.Boolean, default=False)
 
-# Association table for many-to-many relationship between Apps and Files
+# Association table for many-to-many relationship between Apps and Files.
+# The composite PK indexes (app_id, file_id) left-to-right, so the explicit
+# index on file_id is what makes back-link queries (WHERE file_id IN ...) fast.
 app_files = db.Table('app_files',
     db.Column('app_id', db.Integer, db.ForeignKey('apps.id', ondelete="CASCADE"), primary_key=True),
-    db.Column('file_id', db.Integer, db.ForeignKey('files.id', ondelete="CASCADE"), primary_key=True)
+    db.Column('file_id', db.Integer, db.ForeignKey('files.id', ondelete="CASCADE"), primary_key=True),
+    db.Index('ix_app_files_file_id', 'file_id'),
 )
 
 class Apps(db.Model):
@@ -105,6 +212,7 @@ class Apps(db.Model):
     app_version = db.Column(db.String)
     app_type = db.Column(db.String)
     owned = db.Column(db.Boolean, default=False)
+    release_date = db.Column(db.String)
 
     title = db.relationship('Titles', backref=db.backref('apps', lazy=True, cascade="all, delete-orphan"))
     files = db.relationship('Files', secondary=app_files, backref=db.backref('apps', lazy='select'))
@@ -140,15 +248,115 @@ class User(UserMixin, db.Model):
         elif access == 'backup':
             return self.has_backup_access()
 
-def init_db(app):
-    with app.app_context():
-        # Ensure foreign keys are enforced when the SQLite connection is opened
-        @event.listens_for(db.engine, "connect")
-        def set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON;")
-            cursor.close()
+class Task(db.Model):
+    __tablename__ = 'tasks'
 
+    id = db.Column(db.Integer, primary_key=True)
+    parent_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=True)
+    task_name = db.Column(db.String, nullable=False, index=True)
+    status = db.Column(db.String, nullable=False, default='pending')
+    completion_pct = db.Column(db.Integer, default=0)
+    input_json = db.Column(db.Text, nullable=False, default='{}')
+    input_hash = db.Column(db.String(64), nullable=False)
+    output_json = db.Column(db.Text)
+    exit_code = db.Column(db.Integer)
+    error_message = db.Column(db.Text)
+    run_after = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    worker_id = db.Column(db.Integer, nullable=True)
+
+    children = db.relationship('Task', backref=db.backref('parent', remote_side=[id]), lazy='dynamic')
+
+    __table_args__ = (
+        db.Index('ix_tasks_status_created', 'status', 'created_at'),
+        db.Index('ix_tasks_parent_id', 'parent_id'),
+    )
+
+
+class IgnoredEvent(db.Model):
+    """File events the watcher should ignore (written by worker before move/delete)."""
+    __tablename__ = 'ignored_events'
+    id = db.Column(db.Integer, primary_key=True)
+    src_path = db.Column(db.String, nullable=False)
+    dest_path = db.Column(db.String, nullable=False, default='')
+
+
+def add_ignored_event(src_path, dest_path=''):
+    db.session.add(IgnoredEvent(src_path=src_path, dest_path=dest_path))
+    db.session.commit()
+
+
+def pop_ignored_event(src_path=None, dest_path=None):
+    """Remove and return True if a matching ignored event exists."""
+    query = IgnoredEvent.query
+    if src_path is not None:
+        query = query.filter_by(src_path=src_path)
+    if dest_path is not None:
+        query = query.filter_by(dest_path=dest_path)
+    event = query.first()
+    if event:
+        db.session.delete(event)
+        db.session.commit()
+        return True
+    return False
+
+
+class TempFile(db.Model):
+    """A path a background task is actively writing that is not a library file yet."""
+    __tablename__ = 'temp_files'
+    id = db.Column(db.Integer, primary_key=True)
+    filepath = db.Column(db.String, unique=True, nullable=False)
+
+
+def add_temp_file(filepath):
+    stmt = insert(TempFile).values(filepath=filepath).on_conflict_do_nothing()
+    db.session.execute(stmt)
+    db.session.commit()
+
+
+def claim_temp_file(filepath):
+    """Atomically mark a path in-progress; return True if this call inserted the mark."""
+    stmt = insert(TempFile).values(filepath=filepath).on_conflict_do_nothing()
+    result = db.session.execute(stmt)
+    db.session.commit()
+    return result.rowcount > 0
+
+
+def remove_temp_file(filepath):
+    TempFile.query.filter_by(filepath=filepath).delete()
+    db.session.commit()
+
+
+def is_temp_file(filepath):
+    return TempFile.query.filter_by(filepath=filepath).first() is not None
+
+
+def get_temp_file_paths():
+    return {row.filepath for row in TempFile.query.all()}
+
+
+def purge_temp_files():
+    """Delete every temp file that is not commited."""
+    for entry in TempFile.query.all():
+        committed = Files.query.filter_by(filepath=entry.filepath).first()
+        if committed is None and os.path.exists(entry.filepath):
+            add_ignored_event(entry.filepath, '')  # our own deletion
+            try:
+                os.remove(entry.filepath)
+                logger.info(f"Removed interrupted temp file: {entry.filepath}")
+            except OSError:
+                pop_ignored_event(src_path=entry.filepath, dest_path='')
+        db.session.delete(entry)
+    db.session.commit()
+
+
+def init_db(app):
+    # Before the ownfoil.db block: every main connection ATTACHes titles.db, and recreating it
+    # while a connection holds it open is exactly what the file swap cannot survive.
+    titledb.store.init_titledb()
+    with app.app_context():
         # create or migrate database
         if "db" not in sys.argv:
             if not os.path.exists(DB_FILE):
@@ -159,7 +367,7 @@ def init_db(app):
                 logger.info('Checking database migration...')
                 if is_migration_needed():
                     create_db_backup()
-                    upgrade()
+                    upgrade(directory=ALEMBIC_DIR)
                     logger.info("Database migration applied successfully.")
 
 def file_exists_in_db(filepath):
@@ -168,6 +376,23 @@ def file_exists_in_db(filepath):
 def get_file_from_db(file_id):
     return Files.query.filter_by(id=file_id).first()
 
+def create_file(library_id, filepath, file_info):
+    """Insert a Files row from an already-fetched file_info dict. Returns the new row."""
+    new_file = Files(
+        filepath=filepath,
+        library_id=library_id,
+        folder=file_info["filedir"],
+        filename=file_info["filename"],
+        extension=file_info["extension"],
+        size=file_info["size"],
+        mtime=file_info["mtime"],
+        compressed=file_info["compressed"],
+    )
+    db.session.add(new_file)
+    db.session.commit()
+    return new_file
+
+
 def update_file_path(library, old_path, new_path):
     try:
         # Find the file entry in the database using the old_path
@@ -175,57 +400,24 @@ def update_file_path(library, old_path, new_path):
 
         # Extract the new folder and filename from the new_path
         folder = os.path.dirname(new_path)
-        if os.path.normpath(library) == os.path.normpath(folder):
-            # file is at the root of the library
-            new_folder = ''
-        else:
-            new_folder = folder.replace(library, '')
-            new_folder = '/' + new_folder if not new_folder.startswith('/') else new_folder
-
         filename = os.path.basename(new_path)
 
         # Update the file entry with the new path values
         file_entry.filename = filename
         file_entry.filepath = new_path
-        file_entry.folder = new_folder
+        file_entry.folder = folder
         
         # Commit the changes to the database
         db.session.commit()
 
-        logger.debug(f"File path updated successfully from {old_path} to {new_path}.")
-    
     except NoResultFound:
         logger.warning(f"No file entry found for the path: {old_path}.")
+    except IntegrityError:
+        db.session.rollback()
+        raise
     except Exception as e:
         db.session.rollback()  # Roll back the session in case of an error
         logger.error(f"An error occurred while updating the file path: {str(e)}")
-
-def update_file_name(file_id, filename):
-    """Set the name a file is published under. In hardlink mode this is the name of the
-    organized link, which differs from the name of the source file on disk."""
-    try:
-        Files.query.filter_by(id=file_id).update({'filename': filename})
-        db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"An error occurred while updating the file name: {str(e)}")
-
-def get_all_titles_from_db():
-    results = Files.query.all()
-    return [to_dict(r) for r in results]
-
-def get_all_title_files(title_id):
-    title_id = title_id.upper()
-    results = Files.query.filter_by(title_id=title_id).all()
-    return [to_dict(r) for r in results]
-
-def get_all_files_with_identification(identification):
-    results = Files.query.filter_by(identification_type=identification).all()
-    return[to_dict(r)['filepath']  for r in results]
-
-def get_all_files_without_identification(identification):
-    results = Files.query.filter(Files.identification_type != identification).all()
-    return[to_dict(r)['filepath']  for r in results]
 
 def get_all_apps():
     apps_list = [
@@ -240,12 +432,6 @@ def get_all_apps():
         for app in Apps.query.options(db.joinedload(Apps.title)).all()  # Optimized with joinedload
     ]
     return apps_list
-
-def get_all_non_identified_files_from_library(library_id):
-    return Files.query.filter_by(identified=False, library_id=library_id).all()
-
-def get_files_with_identification_from_library(library_id, identification_type):
-    return Files.query.filter_by(library_id=library_id, identification_type=identification_type).all()
 
 def get_filtered_files(content_filter=None) -> list:
     """Get files from database with optional content type filtering."""
@@ -277,20 +463,9 @@ def get_shop_files():
 def get_libraries():
     return Libraries.query.all()
 
-def get_libraries_path():
-    libraries = Libraries.query.all()
-    return [l.path for l in libraries]
-
 def add_library(library_path):
     stmt = insert(Libraries).values(path=library_path).on_conflict_do_nothing()
     db.session.execute(stmt)
-    db.session.commit()
-
-def delete_library(library):
-    if not (isinstance(library, int) or library.isdigit()):
-        library = get_library_id(library)
-        
-    db.session.delete(get_library(library))
     db.session.commit()
 
 def get_library(library_id):
@@ -330,11 +505,15 @@ def get_title_id_db_id(title_id):
 
 def add_title_id_in_db(title_id):
     existing_title = Titles.query.filter_by(title_id=title_id).first()
-    
+
     if not existing_title:
-        new_title = Titles(title_id=title_id)
-        db.session.add(new_title)
-        db.session.commit()
+        try:
+            new_title = Titles(title_id=title_id)
+            db.session.add(new_title)
+            db.session.commit()
+        except Exception:
+            # Another worker inserted the same title concurrently
+            db.session.rollback()
 
 def get_all_title_apps(title_id):
     title = Titles.query.options(joinedload(Titles.apps)).filter_by(title_id=title_id).first()
@@ -344,27 +523,45 @@ def get_app_by_id_and_version(app_id, app_version):
     """Get app entry for a specific app_id and version (unique due to constraint)"""
     return Apps.query.filter_by(app_id=app_id, app_version=app_version).first()
 
-def get_app_files(app_id, app_version):
-    """Get all file_ids associated with a specific app_id and version"""
-    app = get_app_by_id_and_version(app_id, app_version)
-    return [f.id for f in app.files] if app else []
-
-def is_app_owned(app_id, app_version):
-    """Check if an app is owned (has at least one file associated with it)"""
-    app = get_app_by_id_and_version(app_id, app_version)
-    return app.owned if app else False
-
 def add_file_to_app(app_id, app_version, file_id):
     """Add a file to an existing app using many-to-many relationship"""
     app = get_app_by_id_and_version(app_id, app_version)
     if app:
         file_obj = get_file_from_db(file_id)
         if file_obj and file_obj not in app.files:
-            app.files.append(file_obj)
-            app.owned = True
-            db.session.commit()
+            try:
+                app.files.append(file_obj)
+                app.owned = True
+                db.session.commit()
+            except Exception:
+                # Another worker added the same file association concurrently
+                db.session.rollback()
             return True
     return False
+
+def reset_file_identification(file):
+    """Clear identification state on a Files row so it will be re-identified."""
+    file.identified = False
+    file.identification_error = None
+    file.identification_type = None
+    file.identification_attempts = 0
+    file.nb_content = 0
+    file.multicontent = False
+
+def reset_file_verification(file):
+    """Clear verification state on a Files row: the verdicts described the old bytes."""
+    file.signature_valid = None
+    file.hash_valid = None
+    file.hash_modified = None
+    file.verification_error = None
+    file.verified_at = None
+
+def verification_status(file):
+    """The verification status of a Files row, given the row or its id."""
+    from containers.verification import status_of
+    if isinstance(file, int):
+        file = db.session.get(Files, file)
+    return status_of(file.signature_valid, file.hash_valid, file.hash_modified)
 
 def remove_file_from_apps(file_id):
     """Remove a file from all apps that reference it and update owned status"""
@@ -372,9 +569,9 @@ def remove_file_from_apps(file_id):
     file_obj = get_file_from_db(file_id)
     
     if file_obj:
-        # Get all apps associated with this file using the many-to-many relationship
-        associated_apps = file_obj.apps
-        
+        # Snapshot the list — iterating file_obj.apps while removing mutates it
+        associated_apps = list(file_obj.apps)
+
         for app in associated_apps:
             # Remove the file from the app's files relationship
             app.files.remove(file_obj)
@@ -400,52 +597,32 @@ def has_owned_apps(title_id):
     return owned_apps is not None
 
 def remove_titles_without_owned_apps():
-    """Remove titles that have no owned apps"""
+    """Remove titles that have no owned apps."""
     titles_removed = 0
-    titles = get_all_titles()
-    
-    for title in titles:
+    for title in get_all_titles():
         if not has_owned_apps(title.title_id):
             logger.debug(f"Removing title {title.title_id} - no owned apps remaining")
             db.session.delete(title)
             titles_removed += 1
-    
+    if titles_removed:
+        db.session.commit()
     return titles_removed
 
-def delete_files_by_library(library_path):
-    success = True
-    errors = []
-    try:
-        # Find all files with the given library
-        files_to_delete = Files.query.filter_by(library=library_path).all()
-        
-        # Update Apps table before deleting files
-        total_apps_updated = 0
-        for file in files_to_delete:
-            apps_updated = remove_file_from_apps(file.id)
-            total_apps_updated += apps_updated
-        
-        # Delete each file
-        for file in files_to_delete:
-            db.session.delete(file)
-        
-        # Commit the changes
-        db.session.commit()
-        
-        logger.info(f"All entries with library '{library_path}' have been deleted.")
-        if total_apps_updated > 0:
-            logger.info(f"Updated {total_apps_updated} app entries to remove library file references.")
-        return success, errors
-    except Exception as e:
-        # If there's an error, rollback the session
-        db.session.rollback()
-        logger.error(f"An error occurred: {e}")
-        success = False
-        errors.append({
-            'path': 'library/paths',
-            'error': f"An error occurred: {e}"
-        })
-        return success, errors
+def _dir_prefix_like(dirpath):
+    """LIKE pattern matching files directly or recursively under dirpath, escaping wildcards.
+    Uses the host separator: stored filepaths come from the filesystem, so they are
+    backslash-separated on Windows and a '/' pattern would match nothing there."""
+    escaped = dirpath.rstrip('/' + os.sep).replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return escaped + os.sep.replace('\\', '\\\\') + '%'
+
+def delete_files_under_dir(dirpath):
+    """Delete all library files under a directory (folder moved out/removed). Returns count."""
+    files = Files.query.filter(Files.filepath.like(_dir_prefix_like(dirpath), escape='\\')).all()
+    for f in files:
+        remove_file_from_apps(f.id)
+        db.session.delete(f)
+    db.session.commit()
+    return len(files)
 
 def delete_file_by_filepath(filepath):
     try:
@@ -474,18 +651,18 @@ def delete_file_by_filepath(filepath):
         logger.error(f"An error occurred while removing the file path: {str(e)}")
 
 def remove_missing_files_from_db():
-    try:
-        # Query all entries in the Files table
-        files = Files.query.all()
-        
-        for file_entry in files:
-            # Check if the file exists on disk
-            if not os.path.exists(file_entry.filepath):
-                logger.debug(f"File not found, marking file for deletion: {file_entry.filepath}")
-                delete_file_by_filepath(file_entry.filepath)
-    
-    except Exception as e:
-        logger.error(f"An error occurred while removing missing files: {str(e)}")
+    """Bulk-delete Files rows whose path no longer exists on disk; recompute affected app ownership."""
+    missing = [f for f in Files.query.all() if not os.path.exists(f.filepath)]
+    if not missing:
+        return
+    affected_apps = {a for f in missing for a in f.apps}
+    for f in missing:
+        db.session.delete(f)
+    db.session.flush()
+    for app in affected_apps:
+        app.owned = len(app.files) > 0
+    db.session.commit()
+    logger.info(f"Removed {len(missing)} missing files from database.")
 
 def increment_download_count(filepath):
     """Increment the download count for a file by filepath"""
@@ -504,14 +681,11 @@ def increment_download_count(filepath):
 
 @throttle(60, key_func=lambda filepath, host: (filepath, host))
 def increment_download_count_throttled(filepath, host):
-    """Throttled wrapper around increment_download_count.
-
-    Ensures the download count is incremented at most once per (filepath, host) pair
-    within a 60-second window. This prevents clients that use HTTP range requests from
-    inflating the count with the many sub-requests that make up a single download.
-
-    Args:
-        filepath: Absolute path of the file being served.
-        host: IP address (or identifier) of the requesting client.
-    """
+    """Throttled wrapper around increment_download_count per (filepath, host) pair."""
     increment_download_count(filepath)
+
+
+def reset_files_organized():
+    """Reset the organized flag on all files so the organizer re-evaluates them."""
+    Files.query.update({Files.organized: False})
+    db.session.commit()

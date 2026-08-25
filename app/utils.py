@@ -1,14 +1,22 @@
+import ipaddress
 import logging
 import re
+import socket
+import sys
 import threading
 import time
+from datetime import timedelta
 from functools import wraps
+from pathlib import Path
+from typing import Optional, Tuple
 import json
 import os
-import tempfile
+from constants import *
 
-# Global lock for all JSON writes in this process
-_json_write_lock = threading.Lock()
+# Shared log format used by the app, workers and the Gunicorn logger
+LOG_FORMAT = '[%(asctime)s.%(msecs)03d] %(levelname)s (%(module)s) %(message)s'
+LOG_DATEFMT = '%Y-%m-%d %H:%M:%S'
+
 
 # Custom logging formatter to support colors
 class ColoredFormatter(logging.Formatter):
@@ -142,21 +150,93 @@ def throttle(wait, key_func=None):
         return throttled
     return decorator
 
+def path_is_within(path, directory):
+    """True if path is directory itself or lives under it, compared by path component."""
+    root = directory.rstrip('/' + os.sep)
+    return path == root or any(path.startswith(root + sep) for sep in {'/', os.sep})
+
+def get_path_fstype(path):
+    """Return the filesystem type backing path via /proc/mounts, or None if undeterminable."""
+    try:
+        with open('/proc/mounts') as f:
+            mounts = [(p[1], p[2]) for p in (line.split() for line in f) if len(p) >= 3]
+    except OSError:
+        return None
+    abspath = os.path.abspath(path)
+    best_mount, best_fstype = '', None
+    for mountpoint, fstype in mounts:
+        mountpoint = mountpoint.replace('\\040', ' ')
+        if (abspath == mountpoint or abspath.startswith(mountpoint.rstrip('/') + '/')) \
+                and len(mountpoint) >= len(best_mount):
+            best_mount, best_fstype = mountpoint, fstype
+    return best_fstype
+
+def get_windows_drive_type(drive):
+    """Return the GetDriveTypeW code for a drive root (e.g. 'C:\\'), or None if unavailable."""
+    import ctypes
+    try:
+        return ctypes.windll.kernel32.GetDriveTypeW(ctypes.c_wchar_p(drive))
+    except (AttributeError, OSError):
+        return None
+
+def is_windows_network_path(path):
+    """True if path is a UNC share or lives on a mapped network drive.
+    Undeterminable drives are treated as network so they are polled."""
+    from constants import WINDOWS_LOCAL_DRIVE_TYPES
+    import ntpath
+    drive = ntpath.splitdrive(ntpath.abspath(path))[0]
+    if not drive:
+        return True
+    if drive.startswith('\\\\') or drive.startswith('//'):
+        return True  # UNC share, always remote
+    drive_type = get_windows_drive_type(drive + '\\')
+    if drive_type is None:
+        return True
+    return drive_type not in WINDOWS_LOCAL_DRIVE_TYPES
+
+def is_network_path(path):
+    """True if path is on a network filesystem that native watchers can't observe.
+    Windows resolves the drive type; elsewhere the mount table decides. Undeterminable
+    filesystems (e.g. macOS, which has no /proc/mounts) are treated as network so they are polled."""
+    from constants import NETWORK_FSTYPES
+    if sys.platform == 'win32':
+        return is_windows_network_path(path)
+    fstype = get_path_fstype(path)
+    if fstype is None:
+        return True
+    return fstype in NETWORK_FSTYPES
+
+def client_address(request):
+    """The address of the client itself, seen through a reverse proxy.
+
+    remote_addr is the proxy for every request behind one, which collapses all clients into
+    a single identity - enough to make per-client throttling suppress other people's calls.
+    """
+    forwarded = request.headers.get('X-Forwarded-For', '')
+    return forwarded.split(',')[0].strip() or request.remote_addr
+
+def get_lan_ip(family=socket.AF_INET):
+    """Return the IP of the interface that reaches the LAN, or None if undeterminable."""
+    # Werkzeug's trick to show a usable URL when bound to 0.0.0.0: ask the kernel which
+    # local address it routes an arbitrary private address through. Nothing is ever sent.
+    target = 'fd31:f903:5ab5:1::1' if family == socket.AF_INET6 else '10.253.155.219'
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as s:
+            s.connect((target, 58162))
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    try:
+        address = ipaddress.ip_address(ip.split('%')[0])
+    except ValueError:
+        return None
+    if address.is_loopback or address.is_unspecified:
+        return None
+    return ip
+
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ['keys', 'txt']
-
-def safe_write_json(path, data, **dump_kwargs):
-    with _json_write_lock:
-        dirpath = os.path.dirname(path) or "."
-        # Create temporary file in same directory
-        with tempfile.NamedTemporaryFile("w", dir=dirpath, delete=False, encoding="utf-8") as tmp:
-            tmp_path = tmp.name
-            json.dump(data, tmp, ensure_ascii=False, indent=2, **dump_kwargs)
-            tmp.flush()
-            os.fsync(tmp.fileno())  # flush to disk
-        # Atomically replace target file
-        os.replace(tmp_path, path)
 
 def merge_dicts_recursive(source, destination):
     """
@@ -177,6 +257,31 @@ def merge_dicts_recursive(source, destination):
         # we don't overwrite existing settings unless explicitly told to.
         # For this task, we only add missing keys.
     return changed
+
+def parse_interval_string(interval_str: str) -> Tuple[int, str]:
+    """Parse interval string like '2h', '30m', '1d', '45s' or '0' into (value, unit)."""
+    if not interval_str or interval_str == '0':
+        return 0, 'h'
+    match = re.match(r'^(\d+)([smhd])$', str(interval_str))
+    if match:
+        return int(match.group(1)), match.group(2)
+    return 0, 'h'
+
+def validate_interval_string(interval_str: str) -> Tuple[bool, Optional[str]]:
+    """Validate interval string format."""
+    if interval_str == '0':
+        return True, None
+    if re.match(r'^\d+[smhd]$', str(interval_str)):
+        return True, None
+    return False, 'Interval must be in format: number+unit (e.g., "2h", "30m", "1d", "45s") or "0" to disable'
+
+def interval_string_to_timedelta(interval_str: str) -> Optional[timedelta]:
+    """Convert interval string to timedelta object."""
+    interval_value, unit = parse_interval_string(interval_str)
+    if interval_value == 0:
+        return None
+    unit_map = {'s': 'seconds', 'm': 'minutes', 'h': 'hours', 'd': 'days'}
+    return timedelta(**{unit_map.get(unit, 'hours'): interval_value})
 
 def delete_empty_folders(path):
     """
@@ -212,3 +317,81 @@ def delete_empty_folders(path):
 
         if not deleted_any_in_pass:
             break # No more empty directories found in this pass, so we are done
+
+
+def replace_char(c, restricted_chars, control_chars):
+    """Map a character to its filesystem-safe replacement, if any."""
+    if c in restricted_chars:
+        return restricted_chars[c]
+    # Control characters map to their Unicode "control pictures" equivalent
+    if ord(c) < 0x20 and (control_chars or c == '\0'):
+        return chr(0x2400 + ord(c))
+    return c
+
+
+def sanitize_filename(name, windows_compatible=False):
+    """Replace restricted characters with their full-width equivalents."""
+    windows = sys.platform == 'win32' or windows_compatible
+    restricted_chars = RESTRICTED_CHARS_WINDOWS if windows else RESTRICTED_CHARS_UNIX
+    sanitized = ''.join(replace_char(c, restricted_chars, windows) for c in name).strip()
+
+    if windows:
+        # A Windows name cannot end with a period
+        if sanitized.endswith('.'):
+            sanitized = sanitized[:-1] + TRAILING_DOT_WINDOWS
+        # Handle Windows reserved names
+        if sanitized.lower() in RESERVED_NAMES_WINDOWS:
+            sanitized = '_' + sanitized # Prepend an underscore to avoid conflict
+
+    return sanitized
+
+
+def sanitized_path_parts(raw_path, windows_compatible):
+    """Split a formatted path into filesystem-safe path parts."""
+    return [sanitize_filename(part, windows_compatible) for part in Path(raw_path.lstrip('/')).parts]
+
+
+def trim_name(name, length):
+    """Cut a name to length, marking the truncation with an ellipsis."""
+    length = max(length, 1)
+    if len(name) <= length:
+        return name
+    return name[:length - 1].rstrip('. ') + TRUNCATION_MARKER
+
+
+def truncate_path_parts(parts, prefix_len):
+    """Shorten path parts, directories first, so that prefix + path fits within MAX_PATH."""
+    *dirs, filename = parts
+    dirs = [trim_name(d, MAX_PART_WINDOWS) for d in dirs]
+    stem, _, ext = filename.rpartition('.')
+    if not stem:
+        stem, ext = filename, ''
+    ext_len = len(ext) + 1 if ext else 0
+    # Length taken by the directories, each preceded by a separator
+    dirs_len = lambda: sum(len(d) + 1 for d in dirs)
+    # Budget left for the stem, keeping room for its extension and a collision suffix
+    stem_room = lambda: min(MAX_PART_WINDOWS - ext_len,
+                            MAX_PATH_WINDOWS - prefix_len - dirs_len() - 1 - ext_len - COLLISION_SUFFIX_RESERVE)
+
+    # Shrink the longest directory until the filename has room and mkdir's own limit is met
+    while dirs and max(len(d) for d in dirs) > MIN_PART_WINDOWS:
+        if prefix_len + dirs_len() <= MAX_DIR_PATH_WINDOWS and stem_room() >= MIN_PART_WINDOWS:
+            break
+        longest = max(range(len(dirs)), key=lambda i: len(dirs[i]))
+        dirs[longest] = trim_name(dirs[longest], len(dirs[longest]) - 1)
+
+    stem = trim_name(stem, stem_room())
+    filename = f'{stem}.{ext}' if ext else stem
+    if prefix_len + dirs_len() + 1 + len(filename) > MAX_PATH_WINDOWS:
+        logging.getLogger('main').warning(f"Path too long for Windows even after truncation: {os.path.join(*dirs, filename)}")
+
+    return dirs + [filename]
+
+
+def human_size(n):
+    """Format a byte count as a human-readable size (e.g. '2.7 GB')."""
+    size = float(n)
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if size < 1024 or unit == 'TB':
+            return f'{size:.1f} {unit}'
+        size /= 1024

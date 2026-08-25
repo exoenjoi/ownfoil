@@ -2,10 +2,12 @@ __pycache__
 config
 data
 
+# capture harness workdir: fixture db, settings and the pseudonym map
+tests/capture/.workdir
+
 # venv
 /bin
 /venv
-/.venv
 /include
 /lib
 /lib64
@@ -15,3 +17,11 @@ data
 
 # pyenv
 .python-version
+
+# uv build/tool artifacts
+/dist
+ownfoil.bat
+uv.lock
+
+.claude
+CLAUDE.local.md

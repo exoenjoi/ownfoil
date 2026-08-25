@@ -2,22 +2,16 @@
 Sphaira client implementation.
 """
 import os
+
 from flask import Request, Response, request, send_from_directory
 
 from .client import BaseClient
 from db import Files, Libraries, increment_download_count_throttled
 from constants import APP_TYPE_FILTERS, ALLOWED_EXTENSIONS
+from utils import client_address
 
-SPHAIRA_DEFAULT_HEADERS = [
-    'Host',
-    'Accept',
-    'Accept-Encoding',
-]
-
-SPHAIRA_ADDITIONAL_HEADERS = [
-    'Authorization',
-    'Range',
-]
+# Sphaira announces itself as `Sphaira/<version>` since version 1.0.6.
+SPHAIRA_USER_AGENT = 'Sphaira/'
 
 SPHAIRA_HTML_TEMPLATE = '''<!DOCTYPE html>
 <html>
@@ -29,7 +23,7 @@ SPHAIRA_HTML_TEMPLATE = '''<!DOCTYPE html>
 </html>'''
 
 class SphairaClient(BaseClient):
-    """Sphaira client with header-based identification, and directory listing support."""
+    """Sphaira client with User-Agent identification, and directory listing support."""
 
     # Class variables
     CLIENT_NAME = "Sphaira"
@@ -38,25 +32,8 @@ class SphairaClient(BaseClient):
 
     @classmethod
     def identify_client(cls, request: Request) -> bool:
-        """Identify Sphaira client by validating required and allowed headers."""
-        headers = set(request.headers.keys())
-
-        default_headers = set(SPHAIRA_DEFAULT_HEADERS)
-        additional_headers = set(SPHAIRA_ADDITIONAL_HEADERS)
-
-        # All default headers must be present
-        if not default_headers.issubset(headers):
-            return False
-
-        # Remove headers added by reverse proxy
-        headers -= set([h for h in headers if h.startswith('X-')])
-
-        # Any extra headers must be allowed
-        extra_headers = headers - default_headers
-        if not extra_headers.issubset(additional_headers):
-            return False
-
-        return True
+        """Identify Sphaira client by its User-Agent."""
+        return request.headers.get('User-Agent', '').lower().startswith(SPHAIRA_USER_AGENT.lower())
 
     def error_response(self, error_message: str) -> Response:
         """Generate error response in dir list format."""
@@ -113,12 +90,12 @@ class SphairaClient(BaseClient):
             # Get the library path for this file
             library = Libraries.query.filter_by(id=file.library_id).first()
             
-            library_path = library.path.rstrip('/')
-            # Published name, which differs from the name on disk in hardlink mode
-            file_path = os.path.join(os.path.dirname(file.filepath), file.filename)
+            library_path = library.path.rstrip('/' + os.sep)
+            file_path = file.filepath
 
-            # Strip library path to get relative path
-            relative_path = file_path[len(library_path):].lstrip('/')
+            # Strip library path to get relative path, in the url form the listing is built in:
+            # filepaths come off the filesystem in its own separator.
+            relative_path = file_path[len(library_path):].lstrip('/' + os.sep).replace(os.sep, '/')
             
             # If we're in a subdirectory, filter to only show items under current path
             if path:
@@ -168,8 +145,10 @@ class SphairaClient(BaseClient):
             # Throws NspBadMagic for HEAD requests anyway
             return self.error_response("File not found")
 
-        self.log_info(f"Serving file: {file.filepath}")
-        increment_download_count_throttled(file.filepath, request.remote_addr)
+        self.log_info(f"Serving file: {file.folder}/{filename}")
+        # Count only once the response exists: a range past the end of the file raises out
+        # of here, and a transfer that never happened is not a download.
+        response = send_from_directory(file.folder, filename)
+        increment_download_count_throttled(file.filepath, client_address(request))
 
-        # Serve from the real path: it is the only one guaranteed to exist on disk
-        return send_from_directory(*os.path.split(file.filepath))
+        return response

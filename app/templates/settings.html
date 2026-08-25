@@ -1,10 +1,5 @@
-{% extends "base.html" %}
-{% block content %}
-{% include 'nav.html' %}
-
-<div class="container-fluid setting-body">
-    <div class="row">
-        <div class="col">
+{% extends "settings_layout.html" %}
+{% block panel %}
             <div class="settings-container container mt-3">
 
                 {% if admin_account_created == false %}
@@ -14,7 +9,7 @@
                         created, <strong>authentication is disabled, anyone can access and change the configuration of
                             your shop!</strong>
                         <br>
-                        Add an admin account <a href="/settings#Authentication" class="alert-link">here under
+                        Add an admin account <a href="/admin/settings#Authentication" class="alert-link">here under
                             Authentication</a>.
                     </p>
                 </div>
@@ -27,7 +22,7 @@
                     <strong>Titles will be missed or misidentified if you don't fill in your keys!</strong>
                     See <a target="_blank" href="https://gitea.com/KudbiOdd/easy-switch-hacking-shise/wiki/Dump-device-keys" class="alert-link">this guide</a> on
                     how to extract the
-                    keys from your console, and upload them <a href="/settings#consoleKeysInputLabel" class="alert-link">here
+                    keys from your console, and upload them <a href="/admin/settings#consoleKeysInputLabel" class="alert-link">here
                         in Ownfoil.</a>
                     <hr>
                     If keys are missing, all files <strong>must contain "[TITLEID][vVERSION]"</strong>, else the file won't be recognized.
@@ -37,25 +32,27 @@
                 <div id="missingShopHostAlert" class="alert alert-warning alert-dismissible fade show" role="alert" style="display: none;">
                     <h4 class="alert-heading">Missing shop Host!</h4>
                     Host verification from outside the local network is disabled if the shop <code>Host</code> is
-                    missing, configure it <a href="/settings#shopHostInput" class="alert-link">here
+                    missing, configure it <a href="/admin/settings#shopHostInput" class="alert-link">here
                         in Ownfoil</a> to prevent someone else stealing from your shop.
                     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
 
                 <h2 id="Authentication">Authentication</h2>
 
-                <table class="table table-hover caption-top" id="userTable">
-                    <caption>List of users:</caption>
-                    <thead>
-                        <tr>
-                            <th scope="col">User</th>
-                            <th scope="col">Permissions</th>
-                            <th scope="col">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    </tbody>
-                </table>
+                <div class="table-responsive">
+                    <table class="table table-hover caption-top" id="userTable">
+                        <caption>List of users:</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">User</th>
+                                <th scope="col">Permissions</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    </table>
+                </div>
 
                 <p class="d-inline-flex gap-1">
                     <button class="btn btn-primary" type="button" data-bs-toggle="collapse"
@@ -128,16 +125,20 @@
 
                 <h3 class="pt-3 pb-2">Paths</h3>
                 <p class="mb-2">Configure directories containing your games.</p>
-                <table class="table table-hover caption-top" id="pathsTable">
-                    <thead>
-                        <tr>
-                            <th scope="col">Path</th>
-                            <th scope="col">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    </tbody>
-                </table>
+                <div class="table-responsive">
+                    <table class="table table-hover caption-top" id="pathsTable">
+                        <thead>
+                            <tr>
+                                <th scope="col">Path</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="alert alert-danger d-none" id="pathsAlert" role="alert"></div>
 
                 <!-- Library buttons -->
                 <div class="row g-3">
@@ -190,18 +191,133 @@
                     </div>
                 </div>
 
+                <h3 class="pt-4 pb-2">File watcher</h3>
+                <p>Monitor library paths for changes. Local paths use native OS events; network
+                    filesystems are polled at the interval below.</p>
+                <div class="row g-3 align-items-center mb-3">
+                    <div class="col-auto">
+                        <div class="form-check form-switch mb-0">
+                            <input type="checkbox" class="form-check-input" id="watcherEnabledCheck">
+                            <label class="form-check-label" for="watcherEnabledCheck">Enable file watcher</label>
+                        </div>
+                    </div>
+                    <div class="col-auto">
+                        <label class="col-form-label" for="watcherIntervalInput">Polling interval</label>
+                    </div>
+                    <div class="col-auto">
+                        <div class="input-group">
+                            <input type="number" min="1" class="form-control" id="watcherIntervalInput" style="width:100px;">
+                            <span class="input-group-text">s</span>
+                        </div>
+                        <div id="watcherIntervalFeedback"></div>
+                    </div>
+                </div>
+                <button type="button" id="submitWatcherSettingsBtn" class="btn btn-primary mb-3"
+                    onClick='submitWatcherSettings()'>Save</button>
+
                 <h3 class="pt-4 pb-2">Management</h3>
                 <p>Configure automated library management.</p>
                 <div class="mb-3 form-check">
-                    <input type="checkbox" class="form-check-input" id="compressFilesCheck" disabled>
-                    <label class="form-check-label" for="compressFilesCheck">Compress files</label>
-                    <div class="form-text">Compress files to NSZ/XCZ format after adding them to the library (not yet implemented).</div>
-                </div>
-                <div class="mb-3 form-check">
                     <input type="checkbox" class="form-check-input" id="deleteOlderUpdatesCheck">
                     <label class="form-check-label" for="deleteOlderUpdatesCheck">Delete older updates</label>
-                    <div class="form-text">Deletes older update files when a newer version is available in the library.
-                        When an organizer destination folder is set, only the link is removed, the source file is kept.</div>
+                    <div class="form-text">Deletes older update files when a newer version is available in the library.</div>
+                </div>
+
+                <h4 class="py-2">File compression</h4>
+                <p>Compress files to save disk space after they are added and organized.</p>
+                <div class="row">
+                    <div class="col-7">
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="compressFilesCheck">
+                            <label class="form-check-label" for="compressFilesCheck">Compress files</label>
+                            <div class="form-text">Compress files to <code>NSZ</code>/<code>XCZ</code> (<code>NSP</code>→<code>NSZ</code>,
+                                <code>XCI</code>→<code>XCZ</code>) after they are added and organized.
+                                Every compressed file is verified before the original is removed.</div>
+                        </div>
+                        <div class="row g-3 align-items-center mb-3">
+                            <div class="col-auto">
+                                <label class="col-form-label" for="compressionLevelInput">Compression level</label>
+                            </div>
+                            <div class="col-auto">
+                                <input type="number" min="1" max="22" class="form-control" id="compressionLevelInput" style="width:100px;">
+                            </div>
+                            <div class="col-12">
+                                <div class="form-text">zstandard level (<code>1</code>–<code>22</code>). Higher = smaller files but slower. Default: <code>18</code>.</div>
+                            </div>
+                        </div>
+                        <div class="accordion mb-3" id="compressionAdvancedAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                        data-bs-target="#compressionAdvanced" aria-expanded="false" aria-controls="compressionAdvanced">
+                                        Advanced compression options
+                                    </button>
+                                </h2>
+                                <div id="compressionAdvanced" class="accordion-collapse collapse" data-bs-parent="#compressionAdvancedAccordion">
+                                    <div class="accordion-body">
+                                        <div class="mb-3 form-check">
+                                            <input type="checkbox" class="form-check-input" id="compressLongDistanceCheck">
+                                            <label class="form-check-label" for="compressLongDistanceCheck">Long-distance mode</label>
+                                            <div class="form-text">Enables zstandard long-distance matching for a better ratio on large files, at higher memory use.</div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="compressModeSelect" class="form-label">Compression mode:</label>
+                                            <select class="form-select" id="compressModeSelect">
+                                                <option value="auto">Auto (solid for NSP, block for XCI)</option>
+                                                <option value="solid">Solid (best ratio, not randomly readable)</option>
+                                                <option value="block">Block (random read access, slightly larger)</option>
+                                            </select>
+                                            <div class="form-text">Block compression allows streaming/mounting without full decompression.</div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="compressBlockSizeInput" class="form-label">Block size exponent:</label>
+                                            <input type="number" class="form-control" min="14" max="32" id="compressBlockSizeInput">
+                                            <div class="form-text">Block size is <code>2^x</code> (<code>14</code>–<code>32</code>).
+                                                Default: <code>20</code> (<code>1 MB</code>). Only used in block mode.</div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="compressThreadsInput" class="form-label">Threads per file:</label>
+                                            <input type="number" class="form-control" min="0" max="64" id="compressThreadsInput">
+                                            <div class="form-text">Threads each compression task uses (<code>0</code> = automatic). Note: this multiplies with the
+                                                number of workers — high values across many workers can oversubscribe the CPU.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <h4 class="py-2">File verification</h4>
+                <p>Check that files are original and intact. Requires valid console keys.</p>
+                <div class="row">
+                    <div class="col-7">
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="verifyFilesCheck">
+                            <label class="form-check-label" for="verifyFilesCheck">Verify files</label>
+                            <div class="form-text">Enable file verification: use <code>signature</code>
+                                verification to check origin, and <code>hash</code> verification to check integrity.</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="verificationDepth"
+                                       id="verificationDepthSignature" value="signature">
+                                <label class="form-check-label" for="verificationDepthSignature">Signature only</label>
+                                <div class="form-text">Checks that the container decrypts and that every
+                                    <code>NCA</code> header signature is Nintendo's.</div>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="verificationDepth"
+                                       id="verificationDepthHash" value="hash">
+                                <label class="form-check-label" for="verificationDepthHash">Full hash</label>
+                                <div class="form-text">Also hashes every byte of every <code>NCA</code> and
+                                    compares it against what the file claims, to ensure integrity.</div>
+                            </div>
+                        </div>
+                        <div class="alert alert-warning d-none" id="verificationKeysAlert" role="alert">
+                            Verification is disabled: no valid console keys are loaded.
+                        </div>
+                    </div>
                 </div>
 
                 <h4 class="py-2">Organizer</h4>
@@ -213,34 +329,22 @@
                             <label class="form-check-label" for="organizerEnabledCheck">Enable organizer</label>
                             <div class="form-text">Enables automatic organization of identified files in the library, according to the templates below.</div>
                         </div>
-                        <div class="mb-3">
-                            <label for="organizerDestinationInput" class="form-label">Destination folder:</label>
-                            <input type="text" class="form-control form-control-code" id="organizerDestinationInput">
-                            <div class="invalid-feedback" id="organizerDestinationInputFeedback"></div>
-                            <div class="form-text">Leave empty to rename files in place. When set, source files are never
-                                touched: Ownfoil creates hardlinks with the templated names in this folder, which becomes
-                                your organized library. Useful when the files must keep their original name, e.g. torrents
-                                being seeded. The folder must exist, must be outside of every library, and must be on the
-                                same filesystem as your libraries (hardlinks cannot cross filesystems).</div>
-                        </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="removeEmptyFoldersCheck">
                             <label class="form-check-label" for="removeEmptyFoldersCheck">Remove empty folders</label>
-                            <div class="form-text">Removes empty folders after organizing files. Ignored when a destination
-                                folder is set, source folders are left untouched.</div>
+                            <div class="form-text">Removes empty folders after organizing files.</div>
                         </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="windowsCompatibleCheck">
                             <label class="form-check-label" for="windowsCompatibleCheck">Windows compatible filenames</label>
                             <div class="form-text">Ownfoil enforces filename sanitization depending on the OS running it. Enabling this will sanitize filenames with
-                                Windows compatible characters, this is needed when acessing libraries from Windows systems (e.g. SMB/NFS mount).</div>
+                                Windows compatible characters and keep paths within the Windows length limit, this is needed when acessing libraries from Windows systems (e.g. SMB/NFS mount).</div>
                         </div>
                     </div>
                 </div>
 
                 <h5 class="pb-3 pt-2">Templates</h5>
-                <p>The final computed paths will be relative to the root path of the library, or to the destination folder
-                    when one is set, the file extension is added automatically.</p>
+                <p>The final computed paths will be relative to the root path of the library, the file extension is added automatically.</p>
                 <div class="row">
                     <div class="col-7">
                         <div class="mb-3">
@@ -406,10 +510,10 @@
                 <p>Configure the periodic jobs. Interval format is <code>number + unit</code>  (e.g., <code>2h</code>, <code>30m</code>, <code>1d</code>), with units: <code>s</code> (seconds), <code>m</code> (minutes), <code>h</code> (hours), <code>d</code> (days). Set to <code>0</code> to disable.</p>
                 <div class="row mb-3">
                     <div class="col-6">
-                        <label for="scanIntervalInput" class="form-label">Scan interval:</label>
-                        <input type="text" class="form-control" id="scanIntervalInput" aria-describedby="scanIntervalHelp" placeholder="2h">
-                        <div id="scanIntervalFeedback"></div>
-                        <div id="scanIntervalHelp" class="form-text">How often to automatically update TitleDB, scan and regenerate the library.</div>
+                        <label for="titledbUpdateIntervalInput" class="form-label">TitleDB update interval:</label>
+                        <input type="text" class="form-control" id="titledbUpdateIntervalInput" aria-describedby="titledbUpdateIntervalHelp" placeholder="2h">
+                        <div id="titledbUpdateIntervalFeedback"></div>
+                        <div id="titledbUpdateIntervalHelp" class="form-text">How often to automatically refresh TitleDB and re-process the library.</div>
                     </div>
                 </div>
 
@@ -419,88 +523,47 @@
                 </div>
 
                 <hr class="hr-settings">
-                <h2 class="pb-2">Downloader</h2>
-                <p>Search Prowlarr for the content missing from your library, from the <code>Search</code> button on a
-                    game or from the <code>Discover</code> page. Prowlarr hands the release you pick to its own
-                    download client, so it must have one configured. Nothing is ever grabbed without your click.</p>
-
-                <h4 class="pt-3 pb-2">Prowlarr</h4>
-                <div class="row">
-                    <div class="col-7">
-                        <div class="mb-3">
-                            <label for="prowlarrUrlInput" class="form-label">Prowlarr URL:</label>
-                            <input type="text" class="form-control" id="prowlarrUrlInput" placeholder="http://prowlarr:9696">
-                            <div class="invalid-feedback" id="prowlarrUrlInputFeedback"></div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="prowlarrApiKeyInput" class="form-label">API key:</label>
-                            <input type="password" class="form-control" id="prowlarrApiKeyInput" autocomplete="new-password">
-                            <div class="form-text">Found in Prowlarr under Settings &gt; General. Leave empty to keep
-                                the one already saved.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="prowlarrCategoriesInput" class="form-label">Categories:</label>
-                            <input type="text" class="form-control form-control-code" id="prowlarrCategoriesInput" placeholder="1000, 1090">
-                            <div class="form-text">Optional, comma separated Newznab category ids. There is no standard
-                                category for the Switch, so this is empty by default and every indexer is searched.</div>
-                        </div>
+                <h2 class="pb-2">Workers</h2>
+                <p>Configure the number of task worker processes. More workers allow parallel processing of tasks (e.g., scanning, identifying files).</p>
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <label for="workerCountInput" class="form-label">Worker count:</label>
+                        <input type="number" class="form-control" id="workerCountInput" min="1" step="1">
+                        <div id="workerCountFeedback"></div>
+                        <div id="workerCountHelp" class="form-text">Number of worker processes.</div>
                     </div>
                 </div>
 
-                <h4 class="pt-3 pb-2">qBittorrent <small class="text-body-secondary">(optional)</small></h4>
-                <p>Read only, used to show download progress. Ownfoil never adds or removes torrents.</p>
-                <div class="row">
-                    <div class="col-7">
-                        <div class="mb-3">
-                            <label for="qbtUrlInput" class="form-label">qBittorrent URL:</label>
-                            <input type="text" class="form-control" id="qbtUrlInput" placeholder="http://qbittorrent:8080">
-                        </div>
-                        <div class="mb-3">
-                            <label for="qbtUsernameInput" class="form-label">Username:</label>
-                            <input type="text" class="form-control" id="qbtUsernameInput" autocomplete="off">
-                        </div>
-                        <div class="mb-3">
-                            <label for="qbtPasswordInput" class="form-label">Password:</label>
-                            <input type="password" class="form-control" id="qbtPasswordInput" autocomplete="new-password">
-                            <div class="form-text">Leave empty to keep the one already saved.</div>
-                        </div>
-                    </div>
-                </div>
-
-                <h4 class="pt-3 pb-2">Filters</h4>
-                <div class="row">
-                    <div class="col-7">
-                        <div class="mb-3">
-                            <label for="minSeedersInput" class="form-label">Minimum seeders:</label>
-                            <input type="number" min="0" class="form-control" id="minSeedersInput">
-                        </div>
-                        <div class="mb-3">
-                            <label for="maxSizeGbInput" class="form-label">Maximum size (GB):</label>
-                            <input type="number" min="0" step="0.1" class="form-control" id="maxSizeGbInput">
-                            <div class="form-text">Set to <code>0</code> for no size limit.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="preferredExtInput" class="form-label">Preferred extensions:</label>
-                            <input type="text" class="form-control form-control-code" id="preferredExtInput" placeholder="nsz, nsp, xcz, xci">
-                            <div class="form-text">Comma separated, best first. A release whose extension is not in
-                                this list is never grabbed.</div>
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <label for="ioLimitInput" class="form-label">Max concurrent I/O tasks:</label>
+                        <input type="number" class="form-control" id="ioLimitInput" min="1" step="1">
+                        <div id="ioLimitFeedback"></div>
+                        <div id="ioLimitHelp" class="form-text">
+                            How many disk-heavy tasks (compression, decompression) run at once, independent of
+                            worker count. Compressing several multi-GB files in parallel from one disk makes the
+                            heads seek back and forth and can collapse throughput, so more is not always faster.
+                            Pick based on where your library lives:
+                            <ul class="mb-0">
+                                <li><strong>Network share or a single hard drive (HDD): 1</strong> — avoids seek
+                                    thrashing; the safe default.</li>
+                                <li><strong>SATA SSD: 2–3</strong> — no seek penalty, so limited by CPU.</li>
+                                <li><strong>NVMe with spare CPU cores: raise toward your core count</strong> — each
+                                    compression uses ~3–4 threads, so the CPU, not the disk, is the ceiling.</li>
+                            </ul>
                         </div>
                     </div>
                 </div>
 
                 <div class="mb-3">
-                    <button type="button" id="submitDownloaderSettingsBtn" class="btn btn-primary"
-                        onClick='submitDownloaderSettings()'>Submit</button>
-                    <button type="button" id="testDownloaderBtn" class="btn btn-outline-secondary"
-                        onClick='testDownloader()'>Test connection</button>
+                    <button type="button" id="submitWorkerSettingsBtn" class="btn btn-primary"
+                        onClick='submitWorkerSettings()'>Submit</button>
                 </div>
-                <div id="downloaderTestResult"></div>
 
             </div>
-        </div>
-    </div>
-</div>
+{% endblock %}
 
+{% block panel_scripts %}
 <script>
 
     settings_map = {
@@ -522,28 +585,40 @@
         return $('#' + checkboxId).is(":checked")
     }
 
-    function scanLibrary(path = null) {
-        $('.scanBtn').prop('disabled', true);
-        data = {
-            path: path
-        }
-        $.ajax({
-            url: '/api/library/scan',
-            type: 'POST',
-            data: JSON.stringify(data),
-            contentType: "application/json",
-            success: function (result) {
-                if (result['success']) {
-                    if (result['status_code'] == '302') {
-                        window.location.href = result['location']
-                        return
-                    }
-                    console.log('Scan Success!');
-                }
-                $('.scanBtn').prop('disabled', false);
-            }
-        });
+    // Scans one library, or every configured one when path is null.
+    const SCAN_MUTATION = `
+        mutation Scan($path: String) {
+            scanLibrary(path: $path) { id status }
+        }`;
 
+    async function scanLibrary(path = null) {
+        $('.scanBtn').prop('disabled', true);
+        try {
+            const r = await fetch('/api/graphql', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+                credentials: 'same-origin',
+                body: JSON.stringify({query: SCAN_MUTATION, variables: {path: path}}),
+            });
+            if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}`);
+            const body = await r.json();
+            if (body.errors && body.errors.length) {
+                throw new Error('GraphQL errors: ' + JSON.stringify(body.errors));
+            }
+            console.log('Scan enqueued:', body.data.scanLibrary);
+            showPathsError(null);
+        } catch (e) {
+            console.error(e);
+            showPathsError('Could not start scan: ' + e.message);
+        } finally {
+            $('.scanBtn').prop('disabled', false);
+        }
+    }
+
+    // Shows API `errors` (or a plain message) above the paths table; falsy clears it.
+    function showPathsError(errors) {
+        const text = Array.isArray(errors) ? errors.map(e => e.error || e).join(' ') : errors;
+        $('#pathsAlert').text(text || '').toggleClass('d-none', !text);
     }
 
     function fillLibraryTable() {
@@ -563,16 +638,48 @@
                     '<tr><td>-</td><td>-</td><td>');
             } else {
                 paths.forEach(path => {
+                    // The path is set with .text()/.attr(): concatenating it into markup, or into an
+                    // inline handler, makes the browser eat backslashes in Windows paths (issue #297).
+                    const scanBtn = $('<button type="button" class="btn btn-outline-info btn-sm scanBtn"><i class="bi bi-arrow-clockwise"></i></button>').attr('data-bs-path', path);
+                    const deleteBtn = $('<button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#deletePathModal"><i class="bi bi-x-circle"></i></button>').attr('data-bs-path', path);
                     $('#pathsTable tbody').append(
-                        '<tr><td>' + path + '</td>'
-                        + '<td>' +
-                        '<button type="button" class="btn btn-outline-info btn-sm scanBtn" onclick=\'scanLibrary("' + path + '");\' ><i class="bi bi-arrow-clockwise"></i></button> ' +
-                        '<button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#deletePathModal" data-bs-path="' + path + '"\'><i class="bi bi-x-circle"></i></button>' +
-                        '</td></tr>');
+                        $('<tr>').append($('<td>').text(path), $('<td>').append(scanBtn, ' ', deleteBtn)));
                 })
             }
+            const watcher = result.watcher || { enabled: true, polling_interval: 60 };
+            $('#watcherEnabledCheck').prop('checked', watcher.enabled);
+            $('#watcherIntervalInput').val(watcher.polling_interval);
         });
 
+    }
+
+    function submitWatcherSettings() {
+        $('#submitWatcherSettingsBtn').prop('disabled', true);
+        data = {
+            enabled: getCheckboxStatus("watcherEnabledCheck"),
+            polling_interval: parseInt($('#watcherIntervalInput').val(), 10)
+        }
+        $.ajax({
+            url: "/api/settings/library/watcher",
+            type: 'POST',
+            data: JSON.stringify(data),
+            contentType: "application/json",
+            success: function (result) {
+                if (!result['success']) {
+                    if (result['errors']) {
+                        result['errors'].forEach(error => {
+                            $('#watcherIntervalFeedback').text(error['error']);
+                            $('#watcherIntervalFeedback').addClass('invalid-feedback d-block');
+                            $("#watcherIntervalInput").removeClass('is-valid').addClass('is-invalid');
+                        });
+                    }
+                } else {
+                    $('#watcherIntervalFeedback').text('').removeClass('invalid-feedback d-block');
+                    $("#watcherIntervalInput").removeClass('is-invalid').addClass('is-valid');
+                }
+                $('#submitWatcherSettingsBtn').prop('disabled', false);
+            }
+        });
     }
 
     function fillUserTable() {
@@ -630,6 +737,11 @@
     }
 
     function updateKeysElements(titlesSettings) {
+        // Verification cannot run without keys: nstools needs them to open a container.
+        const validKeys = Boolean(titlesSettings['valid_keys']);
+        $('#verifyFilesCheck, #verificationDepthSignature, #verificationDepthHash').prop('disabled', !validKeys);
+        $('#verificationKeysAlert').toggleClass('d-none', validKeys);
+
         // Keys alert
         if (titlesSettings['valid_keys']) {
             $('#consoleKeysFeedback').text("Keys are valid!");
@@ -675,27 +787,20 @@
         }
     }
 
+    // Row buttons carry their path in data-bs-path, read back as a string rather than
+    // re-parsed as markup or JS.
+    $('#pathsTable').on('click', '.scanBtn', function () {
+        scanLibrary($(this).attr('data-bs-path'))
+    })
+
     const deletePathModal = $('#deletePathModal')
     if (deletePathModal) {
         deletePathModal.on('show.bs.modal', event => {
-            // Button that triggered the modal
-            const button = event.relatedTarget
-            // Extract info from data-bs-* attributes
-            const path = button.getAttribute('data-bs-path')
-            // If necessary, you could initiate an Ajax request here
-            // and then do the updating in a callback.
-
-            // Update the modal's content.
-            // const modalTitle = deletePathModal.querySelector('.modal-title')
-            const modalBody = deletePathModal.find('.modal-body')
-            const deleteBtn = deletePathModal.find('.btn-danger')
-
-
-            deleteBtn.attr('onClick', 'deleteLibraryPath("' + path + '");');
-
-            // modalTitle.textContent = `New message to ${recipient}`
-            modalBody.text("Delete path " + path + " ?")
+            const path = event.relatedTarget.getAttribute('data-bs-path')
+            deletePathModal.data('path', path)
+            deletePathModal.find('.modal-body').text("Delete path " + path + " ?")
         })
+        deletePathModal.find('.btn-danger').on('click', () => deleteLibraryPath(deletePathModal.data('path')))
     }
 
     const deleteUserModal = $('#deleteUserModal')
@@ -749,9 +854,13 @@
             data: JSON.stringify(data),
             contentType: "application/json",
             success: function (result) {
+                showPathsError(result['success'] ? null : result['errors']);
                 if (result['success']) {
                     fillLibraryTable();
                 }
+            },
+            error: function (xhr) {
+                showPathsError('Could not delete path: HTTP ' + xhr.status + '.');
             }
         });
     }
@@ -994,10 +1103,15 @@
                     }
                     console.log('Sucessfully added path ' + path);
                     setInputVal("libraryPathInput", "")
+                    showPathsError(null);
                     fillLibraryTable();
                 } else {
-                    console.log('Error adding path ' + path);
+                    showPathsError(result['errors']);
                 }
+                $('#submitNewLibraryPathBtn').prop('disabled', false);
+            },
+            error: function (xhr) {
+                showPathsError('Could not add path: HTTP ' + xhr.status + '.');
                 $('#submitNewLibraryPathBtn').prop('disabled', false);
             }
         });
@@ -1104,11 +1218,21 @@
     function submitLibraryManagementSettings() {
         $('#submitLibraryManagementSettingsBtn').prop('disabled', true);
         data = {
-            compress_files: getCheckboxStatus("compressFilesCheck"),
+            compression: {
+                enabled: getCheckboxStatus("compressFilesCheck"),
+                level: parseInt(getInputVal("compressionLevelInput")),
+                long_distance: getCheckboxStatus("compressLongDistanceCheck"),
+                mode: getInputVal("compressModeSelect"),
+                block_size_exponent: parseInt(getInputVal("compressBlockSizeInput")),
+                threads: parseInt(getInputVal("compressThreadsInput"))
+            },
+            verification: {
+                enabled: getCheckboxStatus("verifyFilesCheck"),
+                depth: $("input[name='verificationDepth']:checked").val() || "signature"
+            },
             delete_older_updates: getCheckboxStatus("deleteOlderUpdatesCheck"),
             organizer: {
                 enabled: getCheckboxStatus("organizerEnabledCheck"),
-                destination: getInputVal("organizerDestinationInput").trim(),
                 remove_empty_folders: getCheckboxStatus("removeEmptyFoldersCheck"),
                 windows_compatible: getCheckboxStatus("windowsCompatibleCheck"),
                 templates: {
@@ -1128,19 +1252,6 @@
             success: function (result) {
                 if (!result['success']) {
                     console.log('Not Success!');
-                    (result['errors'] || []).forEach(error => {
-                        if (error['path'] === 'library/management/organizer/destination') {
-                            $('#organizerDestinationInputFeedback').text(error['error']);
-                            $('#organizerDestinationInputFeedback').addClass('invalid-feedback d-block');
-                            $("#organizerDestinationInput").addClass('is-invalid');
-                        }
-                        console.log('Path:', error['path']);
-                        console.log('Error:', error['error']);
-                    });
-                } else {
-                    $('#organizerDestinationInputFeedback').text('');
-                    $('#organizerDestinationInputFeedback').removeClass('invalid-feedback d-block');
-                    $("#organizerDestinationInput").removeClass('is-invalid');
                 }
                 $('#submitLibraryManagementSettingsBtn').prop('disabled', false);
             }
@@ -1150,7 +1261,7 @@
     function submitSchedulerSettings() {
         $('#submitSchedulerSettingsBtn').prop('disabled', true);
         data = {
-            scan_interval: getInputVal("scanIntervalInput").trim()
+            titledb_update_interval: getInputVal("titledbUpdateIntervalInput").trim()
         }
 
         $.ajax({
@@ -1163,11 +1274,11 @@
                     console.log('Not Success!');
                     if (result['errors']) {
                         result['errors'].forEach(error => {
-                            if (error['path'] === 'scheduler/scan_interval') {
-                                $('#scanIntervalFeedback').text(error['error']);
-                                $('#scanIntervalFeedback').addClass('invalid-feedback d-block');
-                                $("#scanIntervalInput").removeClass('is-valid');
-                                $("#scanIntervalInput").addClass('is-invalid');
+                            if (error['path'] === 'scheduler/titledb_update_interval') {
+                                $('#titledbUpdateIntervalFeedback').text(error['error']);
+                                $('#titledbUpdateIntervalFeedback').addClass('invalid-feedback d-block');
+                                $("#titledbUpdateIntervalInput").removeClass('is-valid');
+                                $("#titledbUpdateIntervalInput").addClass('is-invalid');
                             }
                             console.log('Path:', error['path']);
                             console.log('Error:', error['error']);
@@ -1175,82 +1286,56 @@
                     }
                 } else {
                     console.log('Scheduler settings updated successfully!');
-                    $('#scanIntervalFeedback').text('');
-                    $('#scanIntervalFeedback').removeClass('invalid-feedback d-block');
-                    $("#scanIntervalInput").removeClass('is-invalid');
-                    $("#scanIntervalInput").addClass('is-valid');
+                    $('#titledbUpdateIntervalFeedback').text('');
+                    $('#titledbUpdateIntervalFeedback').removeClass('invalid-feedback d-block');
+                    $("#titledbUpdateIntervalInput").removeClass('is-invalid');
+                    $("#titledbUpdateIntervalInput").addClass('is-valid');
                 }
                 $('#submitSchedulerSettingsBtn').prop('disabled', false);
             }
         });
     }
 
-    function parseCsv(id) {
-        return getInputVal(id).split(',').map(v => v.trim()).filter(v => v.length);
-    }
-
-    function submitDownloaderSettings() {
-        $('#submitDownloaderSettingsBtn').prop('disabled', true);
+    function submitWorkerSettings() {
+        $('#submitWorkerSettingsBtn').prop('disabled', true);
         data = {
-            prowlarr: {
-                url: getInputVal("prowlarrUrlInput").trim(),
-                api_key: getInputVal("prowlarrApiKeyInput"),
-                categories: parseCsv("prowlarrCategoriesInput").map(Number).filter(n => !isNaN(n))
-            },
-            qbittorrent: {
-                url: getInputVal("qbtUrlInput").trim(),
-                username: getInputVal("qbtUsernameInput").trim(),
-                password: getInputVal("qbtPasswordInput")
-            },
-            filters: {
-                min_seeders: Number(getInputVal("minSeedersInput")) || 0,
-                max_size_gb: Number(getInputVal("maxSizeGbInput")) || 0,
-                preferred_ext: parseCsv("preferredExtInput")
-            }
+            count: parseInt($('#workerCountInput').val()),
+            group_limits: { io: parseInt($('#ioLimitInput').val()) }
         }
 
         $.ajax({
-            url: "/api/settings/downloader",
+            url: "/api/settings/worker",
             type: 'POST',
             data: JSON.stringify(data),
             contentType: "application/json",
             success: function (result) {
-                $("#prowlarrUrlInput").removeClass('is-invalid');
                 if (!result['success']) {
-                    (result['errors'] || []).forEach(error => {
-                        if (error['path'] === 'downloader/prowlarr/url') {
-                            $('#prowlarrUrlInputFeedback').text(error['error']);
-                            $("#prowlarrUrlInput").addClass('is-invalid');
-                        }
-                        console.log('Path:', error['path'], 'Error:', error['error']);
-                    });
+                    if (result['errors']) {
+                        result['errors'].forEach(error => {
+                            if (error['path'] === 'worker/count') {
+                                $('#workerCountFeedback').text(error['error']);
+                                $('#workerCountFeedback').addClass('invalid-feedback d-block');
+                                $("#workerCountInput").removeClass('is-valid');
+                                $("#workerCountInput").addClass('is-invalid');
+                            } else if (error['path'] === 'worker/group_limits') {
+                                $('#ioLimitFeedback').text(error['error']);
+                                $('#ioLimitFeedback').addClass('invalid-feedback d-block');
+                                $("#ioLimitInput").removeClass('is-valid');
+                                $("#ioLimitInput").addClass('is-invalid');
+                            }
+                        });
+                    }
                 } else {
-                    // The secrets were saved, don't keep them in the form
-                    setInputVal("prowlarrApiKeyInput", "");
-                    setInputVal("qbtPasswordInput", "");
+                    $('#workerCountFeedback').text('');
+                    $('#workerCountFeedback').removeClass('invalid-feedback d-block');
+                    $("#workerCountInput").removeClass('is-invalid');
+                    $("#workerCountInput").addClass('is-valid');
+                    $('#ioLimitFeedback').text('');
+                    $('#ioLimitFeedback').removeClass('invalid-feedback d-block');
+                    $("#ioLimitInput").removeClass('is-invalid');
+                    $("#ioLimitInput").addClass('is-valid');
                 }
-                $('#submitDownloaderSettingsBtn').prop('disabled', false);
-            }
-        });
-    }
-
-    function testDownloader() {
-        $('#testDownloaderBtn').prop('disabled', true);
-        $('#downloaderTestResult').html('<div class="text-body-secondary">Testing...</div>');
-        $.ajax({
-            url: "/api/downloader/test",
-            type: 'POST',
-            contentType: "application/json",
-            success: function (result) {
-                const line = (name, res) => `<div class="alert alert-${res['success'] ? 'success' : 'danger'} py-2 mb-2">
-                    <strong>${name}:</strong> ${res['message']}</div>`;
-                $('#downloaderTestResult').html(line('Prowlarr', result['prowlarr'])
-                    + line('qBittorrent', result['qbittorrent']));
-                $('#testDownloaderBtn').prop('disabled', false);
-            },
-            error: function () {
-                $('#downloaderTestResult').html('<div class="alert alert-danger py-2">Test request failed.</div>');
-                $('#testDownloaderBtn').prop('disabled', false);
+                $('#submitWorkerSettingsBtn').prop('disabled', false);
             }
         });
     }
@@ -1301,10 +1386,18 @@
             // Library settings
             librarySettings = result['library'];
             // Populate library management settings
-            $("#compressFilesCheck").prop("checked", librarySettings['management']['compress_files']);
+            const compression = librarySettings['management']['compression'];
+            $("#compressFilesCheck").prop("checked", compression['enabled']);
+            setInputVal("compressionLevelInput", compression['level']);
+            $("#compressLongDistanceCheck").prop("checked", compression['long_distance']);
+            setInputVal("compressModeSelect", compression['mode']);
+            setInputVal("compressBlockSizeInput", compression['block_size_exponent']);
+            setInputVal("compressThreadsInput", compression['threads']);
+            const verification = librarySettings['management']['verification'];
+            $("#verifyFilesCheck").prop("checked", verification['enabled']);
+            $("input[name='verificationDepth'][value='" + verification['depth'] + "']").prop("checked", true);
             $("#deleteOlderUpdatesCheck").prop("checked", librarySettings['management']['delete_older_updates']);
             $("#organizerEnabledCheck").prop("checked", librarySettings['management']['organizer']['enabled']);
-            setInputVal("organizerDestinationInput", librarySettings['management']['organizer']['destination']);
             $("#removeEmptyFoldersCheck").prop("checked", librarySettings['management']['organizer']['remove_empty_folders']);
             $("#windowsCompatibleCheck").prop("checked", librarySettings['management']['organizer']['windows_compatible']);
             setInputVal("baseTemplateInput", librarySettings['management']['organizer']['templates']['base']);
@@ -1323,24 +1416,17 @@
 
             // Scheduler settings
             schedulerSettings = result['scheduler'];
-            if (schedulerSettings && schedulerSettings['scan_interval'] !== undefined) {
-                setInputVal("scanIntervalInput", schedulerSettings['scan_interval']);
+            if (schedulerSettings && schedulerSettings['titledb_update_interval'] !== undefined) {
+                setInputVal("titledbUpdateIntervalInput", schedulerSettings['titledb_update_interval']);
             }
 
-            // Downloader settings, secrets are never sent back by the API
-            downloaderSettings = result['downloader'];
-            if (downloaderSettings) {
-                setInputVal("prowlarrUrlInput", downloaderSettings['prowlarr']['url']);
-                setInputVal("prowlarrCategoriesInput", (downloaderSettings['prowlarr']['categories'] || []).join(', '));
-                setInputVal("qbtUrlInput", downloaderSettings['qbittorrent']['url']);
-                setInputVal("qbtUsernameInput", downloaderSettings['qbittorrent']['username']);
-                $("#prowlarrApiKeyInput").attr('placeholder',
-                    downloaderSettings['prowlarr']['api_key_set'] ? '••••••••  (saved)' : '');
-                $("#qbtPasswordInput").attr('placeholder',
-                    downloaderSettings['qbittorrent']['password_set'] ? '••••••••  (saved)' : '');
-                setInputVal("minSeedersInput", downloaderSettings['filters']['min_seeders']);
-                setInputVal("maxSizeGbInput", downloaderSettings['filters']['max_size_gb']);
-                setInputVal("preferredExtInput", (downloaderSettings['filters']['preferred_ext'] || []).join(', '));
+            // Worker settings
+            workerSettings = result['worker'];
+            if (workerSettings && workerSettings['count'] !== undefined) {
+                $('#workerCountInput').val(workerSettings['count']);
+            }
+            if (workerSettings && workerSettings['group_limits'] && workerSettings['group_limits']['io'] !== undefined) {
+                $('#ioLimitInput').val(workerSettings['group_limits']['io']);
             }
 
             // Shop settings

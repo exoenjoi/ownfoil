@@ -1,16 +1,63 @@
 from constants import *
 from utils import *
 import yaml
-import os, sys
+import os, sys, tempfile
 import threading
 import hashlib
+from contextlib import contextmanager
 
 from nsz.nut import Keys
 
 import logging
 
-settings_lock = threading.Lock()
+# Reentrant: load_settings holds this lock and calls _dump_settings, which re-acquires it.
+settings_lock = threading.RLock()
 keys_lock = threading.Lock()
+
+
+def _dump_settings(settings):
+    """Persist settings atomically so a concurrent reader never sees a truncated file."""
+    with settings_lock:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(CONFIG_FILE), prefix='.settings-', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as yaml_file:
+                yaml.dump(settings, yaml_file)
+                yaml_file.flush()
+                os.fsync(yaml_file.fileno())
+            os.replace(tmp, CONFIG_FILE)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+
+
+@contextmanager
+def settings_transaction():
+    """Hold settings_lock across a read-modify-write so two concurrent saves don't collide."""
+    with settings_lock:
+        settings = load_settings()
+        yield settings
+        _dump_settings(settings)
+
+_cached_settings = None
+_cached_mtimes = (None, None)
+
+def _safe_mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+def get_settings():
+    """Return settings, re-reading when settings.yaml or keys.txt mtime changes."""
+    global _cached_settings, _cached_mtimes
+    mtimes = (_safe_mtime(CONFIG_FILE), _safe_mtime(KEYS_FILE))
+    if _cached_settings is None or mtimes != _cached_mtimes:
+        _cached_settings = load_settings()
+        _cached_mtimes = mtimes
+    return _cached_settings
 
 # Retrieve main logger
 logger = logging.getLogger('main')
@@ -40,6 +87,13 @@ def load_keys(key_file=KEYS_FILE):
         except:
             logger.error(f'Provided keys file {key_file} is invalid.')
         return valid, missing, corrupt
+
+def ensure_keys(action):
+    """Raise unless valid keys are loaded."""
+    if not Keys.keys_loaded:
+        load_keys()
+    if not Keys.keys_loaded:
+        raise RuntimeError(f'Cannot {action}: no valid keys loaded.')
 
 def remove_obsolete_keys(target, defaults, path=''):
     removed = False
@@ -109,6 +163,23 @@ def migrate_shop_settings(settings):
             migrated = True
     return migrated
 
+def normalize_library_paths(settings):
+    """Flatten library.paths from legacy [{path, watcher}] objects back to a plain string list
+    (per-path watcher config is dropped; the watcher is now global). Returns True if changed."""
+    library = settings.setdefault('library', {})
+    changed = False
+    normalized = []
+    for entry in library.get('paths') or []:
+        if isinstance(entry, str):
+            path = entry
+        else:
+            path = entry.get('path')
+            changed = True
+        if path:
+            normalized.append(path)
+    library['paths'] = normalized
+    return changed
+
 def load_settings():
     settings_updated = False
     with settings_lock:
@@ -116,9 +187,16 @@ def load_settings():
             logger.debug('Reading configuration file.')
             with open(CONFIG_FILE, 'r') as yaml_file:
                 settings = yaml.safe_load(yaml_file)
+            if settings is None:
+                settings = {}
+                settings_updated = True
 
             # Migrate old shop settings format
             if migrate_shop_settings(settings):
+                settings_updated = True
+
+            # Flatten legacy per-path watcher objects back to plain path strings
+            if normalize_library_paths(settings):
                 settings_updated = True
 
             # Remove obsolete keys from loaded settings
@@ -134,14 +212,10 @@ def load_settings():
             settings_updated = True
 
         if settings_updated:
-            with open(CONFIG_FILE, 'w') as yaml_file:
-                yaml.dump(settings, yaml_file)
-        
-        # Get Keys informations
-        valid_keys, missing_keys, corrupt_keys = load_keys()
-        settings['titles']['valid_keys'] = valid_keys
-        settings['titles']['missing_keys'] = missing_keys
-        settings['titles']['corrupt_keys'] = corrupt_keys
+            _dump_settings(settings)
+
+        # Prime Keys.keys_loaded for this process (used by identification code)
+        load_keys()
         return settings
 
 def verify_settings(section, data):
@@ -159,6 +233,10 @@ def verify_settings(section, data):
                 break
     return success, errors
 
+def get_library_paths():
+    """Return the configured library paths as a plain list of path strings."""
+    return list(get_settings()['library']['paths'])
+
 def add_library_path_to_settings(path):
     success = True
     errors = []
@@ -170,9 +248,9 @@ def add_library_path_to_settings(path):
         })
         return success, errors
 
-    settings = load_settings()
-    library_paths = settings['library']['paths']
-    if library_paths:
+    with settings_lock:
+        settings = load_settings()
+        library_paths = settings['library']['paths']
         if path in library_paths:
             success = False
             errors.append({
@@ -181,66 +259,45 @@ def add_library_path_to_settings(path):
             })
             return success, errors
         library_paths.append(path)
-    else:
-        library_paths = [path]
-    settings['library']['paths'] = library_paths
-    with settings_lock:
-        with open(CONFIG_FILE, 'w') as yaml_file:
-            yaml.dump(settings, yaml_file)
+        _dump_settings(settings)
     return success, errors
-
-def verify_organizer_destination(destination, library_paths):
-    """The organizer destination holds hardlinks to the library files, it must exist and must
-    not be scanned as a library, otherwise every link would be added again as a new file."""
-    if not destination:
-        return True, []
-    error = None
-    if not os.path.isdir(destination):
-        error = f"Path {destination} does not exists."
-    else:
-        destination_path = os.path.realpath(destination)
-        for library_path in library_paths or []:
-            real_library_path = os.path.realpath(library_path)
-            try:
-                common = os.path.commonpath([destination_path, real_library_path])
-            except ValueError:
-                continue
-            if common in (destination_path, real_library_path):
-                error = f"Path {destination} overlaps with library {library_path}, the organizer destination must be outside of every library."
-                break
-    if error is None:
-        return True, []
-    return False, [{
-        'path': 'library/management/organizer/destination',
-        'error': error
-    }]
 
 def set_library_management_settings(data):
-    settings = load_settings()
-    destination = data.get('organizer', {}).get('destination', '').strip()
-    success, errors = verify_organizer_destination(destination, settings['library']['paths'])
-    if not success:
-        return success, errors
-    if 'organizer' in data:
-        data['organizer']['destination'] = destination
-    settings['library']['management'].update(data)
+    with settings_transaction() as settings:
+        settings['library']['management'].update(data)
+
+def get_watcher_config():
+    """Return the global file watcher config, merged over defaults."""
+    return {**DEFAULT_WATCHER, **(get_settings()['library'].get('watcher') or {})}
+
+def set_watcher_settings(data):
+    """Validate and persist the global file watcher config."""
     with settings_lock:
-        with open(CONFIG_FILE, 'w') as yaml_file:
-            yaml.dump(settings, yaml_file)
-    return success, errors
+        settings = load_settings()
+        config = {**DEFAULT_WATCHER, **(settings['library'].get('watcher') or {})}
+        if 'enabled' in data:
+            config['enabled'] = bool(data['enabled'])
+        if 'polling_interval' in data:
+            try:
+                interval = int(data['polling_interval'])
+            except (TypeError, ValueError):
+                return False, [{'path': 'library/watcher', 'error': 'Polling interval must be an integer.'}]
+            if interval < 1:
+                return False, [{'path': 'library/watcher', 'error': 'Polling interval must be at least 1 second.'}]
+            config['polling_interval'] = interval
+        settings['library']['watcher'] = config
+        _dump_settings(settings)
+    return True, []
 
 def delete_library_path_from_settings(path):
     success = True
     errors = []
-    settings = load_settings()
-    library_paths = settings['library']['paths']
-    if library_paths:
+    with settings_lock:
+        settings = load_settings()
+        library_paths = settings['library']['paths']
         if path in library_paths:
             library_paths.remove(path)
-            settings['library']['paths'] = library_paths
-            with settings_lock:
-                with open(CONFIG_FILE, 'w') as yaml_file:
-                    yaml.dump(settings, yaml_file)
+            _dump_settings(settings)
         else:
             success = False
             errors.append({
@@ -250,52 +307,28 @@ def delete_library_path_from_settings(path):
     return success, errors
 
 def set_titles_settings(region, language):
-    settings = load_settings()
-    settings['titles']['region'] = region
-    settings['titles']['language'] = language
-    with settings_lock:
-        with open(CONFIG_FILE, 'w') as yaml_file:
-            yaml.dump(settings, yaml_file)
+    with settings_transaction() as settings:
+        settings['titles']['region'] = region
+        settings['titles']['language'] = language
 
 def set_shop_settings(data):
-    settings = load_settings()
-    # Clean host URL if present
-    if 'host' in data and '://' in data['host']:
-        data['host'] = data['host'].split('://')[-1]
-    # Update shop-level settings
-    for key in ['host', 'motd', 'public']:
-        if key in data:
-            settings['shop'][key] = data[key]
-    # Update client-specific settings
-    if 'clients' in data:
-        for client_name, client_data in data['clients'].items():
-            settings['shop']['clients'][client_name].update(client_data)
-
-    with settings_lock:
-        with open(CONFIG_FILE, 'w') as yaml_file:
-            yaml.dump(settings, yaml_file)
+    with settings_transaction() as settings:
+        # Clean host URL if present
+        if 'host' in data and '://' in data['host']:
+            data['host'] = data['host'].split('://')[-1]
+        # Update shop-level settings
+        for key in ['host', 'motd', 'public']:
+            if key in data:
+                settings['shop'][key] = data[key]
+        # Update client-specific settings
+        if 'clients' in data:
+            for client_name, client_data in data['clients'].items():
+                settings['shop']['clients'][client_name].update(client_data)
 
 def set_scheduler_settings(data):
-    settings = load_settings()
-    settings['scheduler'].update(data)
-    with settings_lock:
-        with open(CONFIG_FILE, 'w') as yaml_file:
-            yaml.dump(settings, yaml_file)
+    with settings_transaction() as settings:
+        settings['scheduler'].update(data)
 
-# Secrets are blanked out by GET /api/settings, so an empty value means "keep the
-# stored one" instead of "erase it"
-DOWNLOADER_SECRETS = (('prowlarr', 'api_key'), ('qbittorrent', 'password'))
-
-def set_downloader_settings(data):
-    settings = load_settings()
-    for section, key in DOWNLOADER_SECRETS:
-        if not (data.get(section, {}).get(key) or '').strip():
-            data.get(section, {}).pop(key, None)
-    for section, section_data in data.items():
-        if isinstance(section_data, dict):
-            settings['downloader'].setdefault(section, {}).update(section_data)
-        else:
-            settings['downloader'][section] = section_data
-    with settings_lock:
-        with open(CONFIG_FILE, 'w') as yaml_file:
-            yaml.dump(settings, yaml_file)
+def set_worker_settings(data):
+    with settings_transaction() as settings:
+        settings['worker'].update(data)
