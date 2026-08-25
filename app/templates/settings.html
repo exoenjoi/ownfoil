@@ -420,16 +420,9 @@
 
                 <hr class="hr-settings">
                 <h2 class="pb-2">Downloader</h2>
-                <p>Automatically grab the updates missing from your library through Prowlarr. Prowlarr hands the
-                    release to its own download client, so it must have one configured. DLCs are not grabbed
-                    automatically: use the <code>Search</code> button on a game in the library.</p>
-
-                <div class="mb-3 form-check">
-                    <input type="checkbox" class="form-check-input" id="downloaderEnabledCheck">
-                    <label class="form-check-label" for="downloaderEnabledCheck">Enable downloader</label>
-                    <div class="form-text">When enabled, the scheduled job grabs the latest missing update of every
-                        game whose base game you own, up to the limit below.</div>
-                </div>
+                <p>Search Prowlarr for the content missing from your library, from the <code>Search</code> button on a
+                    game or from the <code>Discover</code> page. Prowlarr hands the release you pick to its own
+                    download client, so it must have one configured. Nothing is ever grabbed without your click.</p>
 
                 <h4 class="pt-3 pb-2">Prowlarr</h4>
                 <div class="row">
@@ -487,23 +480,10 @@
                             <div class="form-text">Set to <code>0</code> for no size limit.</div>
                         </div>
                         <div class="mb-3">
-                            <label for="maxPerRunInput" class="form-label">Maximum grabs per run:</label>
-                            <input type="number" min="0" class="form-control" id="maxPerRunInput">
-                            <div class="form-text">The safety net for the first run: on a large library there can be
-                                hundreds of missing updates. Set to <code>0</code> for no limit.</div>
-                        </div>
-                        <div class="mb-3">
                             <label for="preferredExtInput" class="form-label">Preferred extensions:</label>
                             <input type="text" class="form-control form-control-code" id="preferredExtInput" placeholder="nsz, nsp, xcz, xci">
                             <div class="form-text">Comma separated, best first. A release whose extension is not in
                                 this list is never grabbed.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="downloadIntervalInput" class="form-label">Run interval:</label>
-                            <input type="text" class="form-control" id="downloadIntervalInput" placeholder="6h">
-                            <div id="downloadIntervalFeedback"></div>
-                            <div class="form-text">Same format as the scheduler above, <code>0</code> to disable the
-                                automatic job while keeping manual searches.</div>
                         </div>
                     </div>
                 </div>
@@ -1212,8 +1192,6 @@
     function submitDownloaderSettings() {
         $('#submitDownloaderSettingsBtn').prop('disabled', true);
         data = {
-            enabled: getCheckboxStatus("downloaderEnabledCheck"),
-            download_interval: getInputVal("downloadIntervalInput").trim(),
             prowlarr: {
                 url: getInputVal("prowlarrUrlInput").trim(),
                 api_key: getInputVal("prowlarrApiKeyInput"),
@@ -1227,7 +1205,6 @@
             filters: {
                 min_seeders: Number(getInputVal("minSeedersInput")) || 0,
                 max_size_gb: Number(getInputVal("maxSizeGbInput")) || 0,
-                max_per_run: Number(getInputVal("maxPerRunInput")) || 0,
                 preferred_ext: parseCsv("preferredExtInput")
             }
         }
@@ -1238,14 +1215,10 @@
             data: JSON.stringify(data),
             contentType: "application/json",
             success: function (result) {
-                $('#downloadIntervalFeedback').text('').removeClass('invalid-feedback d-block');
-                $("#downloadIntervalInput, #prowlarrUrlInput").removeClass('is-invalid');
+                $("#prowlarrUrlInput").removeClass('is-invalid');
                 if (!result['success']) {
                     (result['errors'] || []).forEach(error => {
-                        if (error['path'] === 'scheduler/download_interval') {
-                            $('#downloadIntervalFeedback').text(error['error']).addClass('invalid-feedback d-block');
-                            $("#downloadIntervalInput").addClass('is-invalid');
-                        } else if (error['path'] === 'downloader/prowlarr/url') {
+                        if (error['path'] === 'downloader/prowlarr/url') {
                             $('#prowlarrUrlInputFeedback').text(error['error']);
                             $("#prowlarrUrlInput").addClass('is-invalid');
                         }
@@ -1353,14 +1326,10 @@
             if (schedulerSettings && schedulerSettings['scan_interval'] !== undefined) {
                 setInputVal("scanIntervalInput", schedulerSettings['scan_interval']);
             }
-            if (schedulerSettings && schedulerSettings['download_interval'] !== undefined) {
-                setInputVal("downloadIntervalInput", schedulerSettings['download_interval']);
-            }
 
             // Downloader settings, secrets are never sent back by the API
             downloaderSettings = result['downloader'];
             if (downloaderSettings) {
-                $("#downloaderEnabledCheck").prop("checked", downloaderSettings['enabled']);
                 setInputVal("prowlarrUrlInput", downloaderSettings['prowlarr']['url']);
                 setInputVal("prowlarrCategoriesInput", (downloaderSettings['prowlarr']['categories'] || []).join(', '));
                 setInputVal("qbtUrlInput", downloaderSettings['qbittorrent']['url']);
@@ -1371,7 +1340,6 @@
                     downloaderSettings['qbittorrent']['password_set'] ? '••••••••  (saved)' : '');
                 setInputVal("minSeedersInput", downloaderSettings['filters']['min_seeders']);
                 setInputVal("maxSizeGbInput", downloaderSettings['filters']['max_size_gb']);
-                setInputVal("maxPerRunInput", downloaderSettings['filters']['max_per_run']);
                 setInputVal("preferredExtInput", (downloaderSettings['filters']['preferred_ext'] || []).join(', '));
             }
 

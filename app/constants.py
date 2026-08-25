@@ -69,10 +69,8 @@ DEFAULT_SETTINGS = {
     },
     "scheduler": {
         "scan_interval": "12h",
-        "download_interval": "6h",
     },
     "downloader": {
-        "enabled": False,
         "prowlarr": {
             "url": "",
             "api_key": "",
@@ -90,7 +88,6 @@ DEFAULT_SETTINGS = {
             "min_seeders": 3,
             "preferred_ext": ["nsz", "nsp", "xcz", "xci"],
             "max_size_gb": 0,
-            "max_per_run": 10,
         },
     }
 }

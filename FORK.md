@@ -64,9 +64,10 @@ behind (see the stale-links note above).
 library path in the settings to force a full pass — `delete_files_by_library()` drops database rows
 only, it never touches the filesystem.
 
-## On the `downloader` branch (not merged): auto-downloader
+## On the `downloader` branch (not merged): manual downloader
 
-Grabs the updates missing from the library through **Prowlarr**. Inspired by
+Searches **Prowlarr** for the content missing from the library and hands the release *you pick* to
+Prowlarr's own download client. Inspired by
 [Athos97/ownfoil](https://github.com/Athos97/ownfoil) (Jackett + qBittorrent, ~1300 lines),
 rewritten in ~700 for three reasons:
 
@@ -79,9 +80,13 @@ rewritten in ~700 for three reasons:
    by game name, and use the id/version for *scoring* instead.
 
 Decisions:
-- **Auto grabs updates only**, latest missing one per game, and only for games whose base game is
-  owned. Capped by `max_per_run` — on a large library the first run would otherwise queue hundreds
-  of torrents. Anything else is grabbed by hand from the 🔍 badge in the library.
+- **Nothing is ever grabbed without a click.** There was a scheduled job that grabbed the latest
+  missing update of every owned game, capped by `max_per_run`; it worked, and it was removed on
+  2026-08-25 because the user does not want the fork to download on its own. Deleted with it: the
+  `download_interval` scheduler entry, the `max_per_run` filter, the `Run now` button, the
+  `/api/downloader/run` route, and the `enabled` flag — which by then gated the job and nothing
+  else, the manual search never having been conditioned on it. `git log` has it if it is ever
+  wanted back.
 - **The 🔍 badge is per title group, not per app.** Since `master` groups the library by title, the
   badge searches the base game's missing update, or the base game itself if it is missing. Missing
   DLCs are only counted by the DLC badge — no per-DLC search from a grouped card.
@@ -102,8 +107,9 @@ Decisions:
   nothing on that path changes.
 - **`rank_releases()` is only tuned for updates** — it rejects an update release with no version
   marker because that is usually the base game. A base-game target passes unranked by that rule, so
-  Discover's ordering is rough. Tolerable because Discover never auto-grabs: the modal lists every
-  release with its rejection reason and the user picks.
+  its ordering is rough, and a patch-only release (`…_Update_v1.9.0_NSW-…`, ~1 GB) can sit near the
+  top of a base-game search. Tolerable because every grab is a human choice: the modal lists each
+  release with its rejection reason and the size, and the user picks.
 - The release modal lives in `templates/release_modal.html`, included by both the library and
   Discover. `missingContentSearchButton()` stayed in `index.html` — it takes a library group object.
 - **A release with 0 seeder is dropped in `rank_releases()`, whatever `min_seeders` says.** It is not

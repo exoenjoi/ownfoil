@@ -12,7 +12,6 @@ import qbittorrent
 import titles as titles_lib
 from constants import APP_TYPE_BASE, APP_TYPE_DLC, APP_TYPE_UPD
 from db import Apps, Titles, is_app_owned
-from settings import load_settings
 
 logger = logging.getLogger('main')
 
@@ -199,33 +198,6 @@ def with_titledb(func):
     return wrapper
 
 
-@with_titledb
-def missing_updates():
-    """Latest missing update of every game whose base game we actually own.
-
-    Missing content is already materialized by add_missing_apps_to_db(): every update
-    and DLC known to titledb exists as an Apps row with owned=False.
-    """
-    latest = {}
-    query = (Apps.query.join(Titles)
-             .filter(Apps.owned.is_(False), Apps.app_type == APP_TYPE_UPD,
-                     Titles.have_base.is_(True)))
-    for app in query.all():
-        title_id = app.title.title_id
-        current = latest.get(title_id)
-        if current is None or int(app.app_version or 0) > int(current.app_version or 0):
-            latest[title_id] = app
-
-    targets = []
-    for title_id, app in latest.items():
-        name = _game_name(title_id)
-        if not name:
-            logger.debug(f'Skipping {app.app_id}: no title info for {title_id}.')
-            continue
-        targets.append(_target(app, title_id, name))
-    return targets
-
-
 def _latest(apps):
     return max(apps, key=lambda a: int(a.app_version or 0)) if apps else None
 
@@ -339,19 +311,6 @@ def grab_release(target, release, settings):
     return True, None
 
 
-def grab_target(target, settings):
-    ranked = search_releases(target, settings)
-    release, reason = best_release(ranked)
-    if release is None:
-        store.add(status=store.STATUS_FAILED, error=reason, title_id=target.get('title_id'),
-                  app_id=target.get('app_id'), app_version=target.get('app_version'),
-                  app_type=target.get('app_type'), name=target.get('name'))
-        logger.info(f"[downloader] No match for {target.get('name')}: {reason}")
-        return False
-    ok, _ = grab_release(target, release, settings)
-    return ok
-
-
 # ---------------------------------------------------------------- status
 
 def sync_status(settings):
@@ -403,39 +362,3 @@ def sync_status(settings):
             'state': torrent.get('state') if torrent else None,
         })
     return result
-
-
-# ---------------------------------------------------------------- job
-
-def is_configured(settings):
-    downloader_settings = settings.get('downloader', {}) or {}
-    prowlarr_settings = downloader_settings.get('prowlarr', {}) or {}
-    return bool(downloader_settings.get('enabled')
-                and prowlarr_settings.get('url') and prowlarr_settings.get('api_key'))
-
-
-def run_job():
-    settings = load_settings()
-    if not is_configured(settings):
-        logger.info('Downloader not enabled or not configured, skipping.')
-        return
-    logger.info('Starting downloader job...')
-    try:
-        sync_status(settings)
-        max_per_run = int(settings['downloader'].get('filters', {}).get('max_per_run') or 0)
-
-        targets = [t for t in missing_updates()
-                   if (store.get(t['app_id'], t['app_version']) or {}).get('status')
-                   not in store.ACTIVE_STATUSES]
-        # Never tried first, so a target that keeps finding nothing does not eat every
-        # slot of max_per_run run after run
-        targets.sort(key=lambda t: store.get(t['app_id'], t['app_version']) is not None)
-        logger.info(f'Downloader: {len(targets)} missing update(s).')
-        if max_per_run:
-            targets = targets[:max_per_run]
-
-        grabbed = sum(1 for target in targets if grab_target(target, settings))
-        sync_status(settings)
-        logger.info(f'Downloader job done, grabbed {grabbed} torrent(s).')
-    except Exception as e:
-        logger.error(f'Downloader job failed: {e}')

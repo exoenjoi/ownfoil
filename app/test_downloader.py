@@ -14,7 +14,7 @@ import downloads_store as store
 from downloader import best_release, rank_releases
 
 FILTERS = {'min_seeders': 3, 'preferred_ext': ['nsz', 'nsp', 'xcz', 'xci'],
-           'max_size_gb': 0, 'max_per_run': 10}
+           'max_size_gb': 0}
 
 # Mario Kart 8 Deluxe, update 3 (3 * 65536 = 196608)
 UPDATE_TARGET = {

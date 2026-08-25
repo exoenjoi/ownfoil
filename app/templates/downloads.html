@@ -7,7 +7,6 @@
         <div class="d-flex align-items-center justify-content-between pb-2">
             <h2 class="mb-0">Downloads</h2>
             <div>
-                <button type="button" id="runDownloaderBtn" class="btn btn-primary" onClick="runDownloader()">Run now</button>
                 <button type="button" class="btn btn-outline-secondary" onClick="refreshDownloads()">Refresh</button>
             </div>
         </div>
@@ -89,23 +88,6 @@
             renderDownloads(result['downloads'] || []);
         }).fail(function () {
             $('#downloadsAlert').html('<div class="alert alert-danger">Could not load the download list.</div>');
-        });
-    }
-
-    function runDownloader() {
-        $('#runDownloaderBtn').prop('disabled', true);
-        $.ajax({
-            url: '/api/downloader/run', type: 'POST', contentType: 'application/json',
-            success: function (result) {
-                if (result['success']) {
-                    $('#downloadsAlert').html(
-                        '<div class="alert alert-info">Downloader started, the list refreshes on its own.</div>');
-                } else {
-                    const error = (result['errors'] || [{}])[0]['error'] || 'Could not start the downloader.';
-                    $('#downloadsAlert').html(`<div class="alert alert-warning">${escapeHtml(error)}</div>`);
-                }
-                $('#runDownloaderBtn').prop('disabled', false);
-            }
         });
     }
 
