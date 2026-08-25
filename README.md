@@ -26,10 +26,10 @@
 > watched, so each game stays a single entry in the shop and is identified only once. The shop
 > publishes the organized names while downloads keep serving the same file.
 >
-> It also adds an [auto-downloader](#auto-downloader): Ownfoil already knows which updates and DLCs
-> your library is missing, so it can search them through Prowlarr and hand the release to Prowlarr's
-> own download client. Combined with the hardlink mode, the whole chain closes on itself: grab,
-> seed, hardlink into a clean library.
+> It also adds a [downloader](#downloader): Ownfoil already knows which updates and DLCs your
+> library is missing, so it searches them through Prowlarr and hands the release *you pick* to
+> Prowlarr's own download client. Nothing is ever grabbed without your click. Combined with the
+> hardlink mode, the whole chain closes on itself: grab, seed, hardlink into a clean library.
 >
 > See [Organizer destination (hardlink mode)](#organizer-destination-hardlink-mode) for setup, and
 > [`ghcr.io/exoenjoi/ownfoil`](https://github.com/exoenjoi/ownfoil/pkgs/container/ownfoil) for the
@@ -229,15 +229,19 @@ Then, in `Settings`:
 seeding. Check it with `ls -li`: a source and its link share the same inode number and a link
 count of 2.
 
-## Auto-downloader
+## Downloader
 
 Ownfoil already knows what your library is missing: every update and DLC that exists upstream but
-has no file is listed as missing content. The downloader turns that list into actual downloads,
-through [Prowlarr](https://prowlarr.com/).
+has no file is listed as missing content. The downloader searches that content on your trackers
+through [Prowlarr](https://prowlarr.com/) — and on the `Discover` page, any Switch game at all,
+whether you own something of it or not.
 
-Prowlarr does the grabbing itself: Ownfoil sends it a release, Prowlarr passes it to *its own*
-download client. So **Prowlarr must have a download client configured** (Settings > Download
-Clients). Ownfoil never adds or removes a torrent.
+**Nothing downloads by itself.** Every grab is a release you picked from a list. There is no
+scheduled job.
+
+Prowlarr does the grabbing: Ownfoil sends it a release, Prowlarr passes it to *its own* download
+client. So **Prowlarr must have a download client configured** (Settings > Download Clients).
+Ownfoil never adds or removes a torrent.
 
 Configure it in `Settings` under `Downloader`:
 
@@ -246,18 +250,21 @@ Configure it in `Settings` under `Downloader`:
 | Prowlarr URL / API key | The key is in Prowlarr under Settings > General. `Test connection` checks it. |
 | Categories | Optional Newznab category ids. There is no standard category for the Switch, so this is empty by default and every indexer is searched. |
 | qBittorrent URL / credentials | Optional, **read only**, used to show download progress on the `Downloads` page. |
-| Minimum seeders / Maximum size | Releases outside these bounds are never grabbed. |
-| Maximum grabs per run | The safety net. On a large library the first run could otherwise queue hundreds of torrents. |
-| Preferred extensions | Best first. A release whose extension is not listed is never grabbed. |
-| Run interval | `0` disables the automatic job while keeping manual searches. |
+| Minimum seeders / Maximum size | Releases outside these bounds are greyed out in the list, with the reason. |
+| Preferred extensions | Best first, used to rank the list. |
 
-**The automatic job only grabs updates**, and only the latest missing one of each game whose base
-game you own. DLCs are searched manually: on a game with missing content, the
-<kbd>🔍</kbd> badge opens a list of releases with a `Grab` button on each.
+Two ways in:
 
-That list is also the best way to judge the matching before enabling anything: releases the
-automatic job would refuse are greyed out with the reason. Most refusals are the important one —
-an update release that carries no version marker in its name, which is usually the base game.
+- the <kbd>🔍</kbd> badge on a game with missing content, in the library;
+- the `Discover` page, which searches every game titledb knows by name — the words you type can be
+  scattered through the title, so `zelda breath of the wild` finds
+  `The Legend of Zelda: Breath of the Wild`. Each card carries the title id, the release date and
+  the publisher, to tell two same-named games apart.
+
+Both open the same list of releases, sortable by name, size, seeders or date. Each release name
+links to its page on the tracker. Releases that failed a filter are greyed out **with the reason**
+and can still be grabbed — the filters are advice, you have the last word. A release with no seeder
+at all is dropped from the list rather than greyed out: it cannot be downloaded.
 
 > [!TIP]
 > Point your download client's save path at the directory you configured as an Ownfoil library. With
