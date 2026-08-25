@@ -64,8 +64,7 @@ def organized_relpath(file_obj, root, organizer_settings):
         safe_parts = sanitized_path_parts(template.format(**format_data), windows_compatible)
         if sys.platform == 'win32' or windows_compatible:
             safe_parts = truncate_path_parts(safe_parts, len(root))
-        new_relative_path = os.path.join(*safe_parts)
-        
+
         return os.path.join(*safe_parts)
 
     except Exception as e:
