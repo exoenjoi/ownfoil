@@ -7,12 +7,26 @@ single-writer list of a few hundred entries.
 import datetime
 import json
 import os
+import tempfile
 import threading
 
 from constants import CONFIG_DIR
-from utils import safe_write_json
 
 DOWNLOADS_FILE = os.path.join(CONFIG_DIR, 'downloads.json')
+
+
+def safe_write_json(path, data):
+    """Write the file atomically, so a concurrent reader never sees a truncated list.
+
+    Lived in utils.py until 2.4.0 removed it with library.json. This is its only caller
+    now, so it lives here rather than in a file upstream owns."""
+    dirpath = os.path.dirname(path) or '.'
+    with tempfile.NamedTemporaryFile('w', dir=dirpath, delete=False, encoding='utf-8') as tmp:
+        tmp_path = tmp.name
+        json.dump(data, tmp, ensure_ascii=False, indent=2)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+    os.replace(tmp_path, path)
 
 # The scheduler job and the HTTP requests both write, a lock guards the read-modify-write
 _lock = threading.Lock()

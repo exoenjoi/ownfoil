@@ -4,6 +4,8 @@ No network, no database: only the pure ranking logic and the JSON store.
 Run with: python app/test_downloader.py
 """
 import os
+import shutil
+import sqlite3
 import sys
 import tempfile
 
@@ -12,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import downloader
 import downloads_store as store
 import prowlarr
+from titledb import store as titledb_store
 from downloader import best_release, rank_releases
 
 FILTERS = {'min_seeders': 3, 'preferred_ext': ['nsz', 'nsp', 'xcz', 'xci'],
@@ -250,6 +253,103 @@ def test_catalog_target_without_a_known_name_is_none():
         assert downloader.catalog_target('01006000040C2000') is None
     finally:
         restore()
+
+
+# ------------------------------------------------------------- catalog search
+
+# (id, name, publisher, release_date). Update ids end in 800, DLC ids in something else.
+FAKE_TITLES = [
+    ('01006000040C2000', "Yoshi's Crafted World", 'Nintendo', 20190329),
+    ('0100000000010000', 'Super Mario Odyssey', 'Nintendo', 20171027),
+    ('010003F003A34800', 'Pokemon Update', 'Nintendo', None),
+    ('01009BF0072D5001', 'Captain Toad DLC', 'Nintendo', None),
+    ('0100ABCDEF012000', 'Pok\u00e9mon \u00c9carlate', 'Nintendo', 20221118),
+    ('0100111111112000', None, 'Nintendo', None),
+    (None, 'No id at all', 'Nintendo', None),
+    ('0100222222222000', 'A Game About Pokemon', 'Indie', None),
+]
+
+
+def fake_titledb(rows=FAKE_TITLES):
+    """Build a throwaway titles.db and point the store at it. Returns a restore callable."""
+    tmpdir = tempfile.mkdtemp()
+    path = os.path.join(tmpdir, 'titles.db')
+    conn = sqlite3.connect(path)
+    conn.execute('CREATE TABLE titles (id TEXT, name TEXT, icon_url TEXT, '
+                 'banner_url TEXT, publisher TEXT, release_date INTEGER)')
+    conn.executemany('INSERT INTO titles VALUES (?, ?, ?, ?, ?, ?)',
+                     [(i, n, 'icon', 'banner', pub, date) for i, n, pub, date in rows])
+    conn.commit()
+    conn.close()
+
+    previous = titledb_store.TITLES_DB_FILE
+    titledb_store.TITLES_DB_FILE = path
+
+    def restore():
+        titledb_store.TITLES_DB_FILE = previous
+        shutil.rmtree(tmpdir)
+    return restore
+
+
+def search(query, limit=60):
+    restore = fake_titledb()
+    try:
+        return downloader.search_base_games(query, limit)
+    finally:
+        restore()
+
+
+def test_only_base_games_are_returned():
+    # Update ids end in 800 and DLC ids in something else; neither is grabbable on its own.
+    names = [r['name'] for r in search('o')]
+    assert 'Pokemon Update' not in names
+    assert 'Captain Toad DLC' not in names
+
+
+def test_the_match_ignores_case_and_accents():
+    # Without folding, a French library is unsearchable from an ASCII keyboard.
+    assert [r['id'] for r in search('ecarlate')] == ['0100ABCDEF012000']
+    assert [r['id'] for r in search('POK\u00c9MON \u00c9')] == ['0100ABCDEF012000']
+
+
+def test_the_typed_words_may_be_scattered_through_the_name():
+    # "zelda breath of the wild" must find "The Legend of Zelda: Breath of the Wild",
+    # where the typed words are there but not side by side.
+    assert [r['id'] for r in search('super odyssey')] == ['0100000000010000']
+
+
+def test_a_typed_word_matches_only_at_the_start_of_a_word():
+    # Otherwise a stray letter matches half the catalog: 'e' is not a word of this name.
+    assert [r['id'] for r in search('pokemon e')] == ['0100ABCDEF012000']
+
+
+def test_prefix_matches_come_first():
+    names = [r['name'] for r in search('pokemon')]
+    assert names == ['Pok\u00e9mon \u00c9carlate', 'A Game About Pokemon']
+
+
+def test_the_limit_leaves_room_to_detect_truncation():
+    # limit + 1 records come back so the caller can tell "capped" from "exactly that many".
+    assert len(search('pokemon', limit=1)) == 2
+
+
+def test_records_missing_a_name_or_an_id_are_skipped():
+    assert search('no id at all') == []
+    assert all(r['name'] for r in search('o'))
+
+
+def test_a_blank_query_matches_nothing():
+    assert search('   ') == []
+
+
+def test_a_titledb_that_was_never_built_returns_none():
+    # None, not [], so the UI can say "scan the library first" instead of "no results".
+    previous = titledb_store.TITLES_DB_FILE
+    titledb_store.TITLES_DB_FILE = os.path.join(tempfile.gettempdir(), 'no-such-titles.db')
+    try:
+        assert downloader.search_base_games('zelda') is None
+    finally:
+        titledb_store.TITLES_DB_FILE = previous
 
 
 if __name__ == '__main__':

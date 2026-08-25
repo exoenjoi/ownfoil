@@ -5,17 +5,26 @@ qBittorrent: it is only read to report progress.
 """
 import logging
 import re
+import unicodedata
 
 import downloads_store as store
 import prowlarr
 import qbittorrent
 import titles as titles_lib
+from titledb import store as titledb_store
 from constants import APP_TYPE_BASE, APP_TYPE_DLC, APP_TYPE_UPD
-from db import Apps, Titles, is_app_owned
+from db import Apps, Titles, get_app_by_id_and_version
 
 logger = logging.getLogger('main')
 
 SWITCH_EXTS = ('nsz', 'nsp', 'xcz', 'xci')
+
+
+def is_app_owned(app_id, app_version):
+    """True if the library holds this exact app version. Lived in db.py until the 2.4.0
+    sync; this is its only caller, so it stays out of a file upstream owns."""
+    app = get_app_by_id_and_version(app_id, app_version)
+    return app.owned if app else False
 
 
 def _norm(value):
@@ -181,28 +190,62 @@ def catalog_target(title_id):
     }
 
 
-def with_titledb(func):
-    """load_titledb() only increments the counter, the caller must decrement it.
+def _fold(text):
+    """Lowercase and strip accents, so 'pokemon' matches 'Pokémon'."""
+    decomposed = unicodedata.normalize('NFKD', text or '')
+    return ''.join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
-    The load is inside the try because it increments the counter before opening the
-    files: if the titledb is missing, the counter would leak and nothing would ever
-    be unloaded again.
+
+# The whole catalogue used to be loaded into memory to be scanned. Since 2.4.0 titledb is
+# SQLite, so this reads two dozen bytes per base game instead and matches in Python -
+# SQL's LIKE cannot fold accents or anchor at word starts without a UDF, and the fold
+# would defeat the index anyway.
+_CATALOG_SQL = """
+    SELECT id, name, icon_url, banner_url, publisher, release_date
+    FROM titles
+    WHERE id LIKE '%000' AND name IS NOT NULL
+"""
+
+
+def search_base_games(query, limit=60):
+    """Base games from titledb whose name matches the query.
+
+    Returns None when titledb has not been built yet, so the caller can tell that apart
+    from an empty result. Returns up to limit + 1 records for the same reason: exactly
+    limit would be indistinguishable from a capped list. Names starting with the query
+    come first - searching 'zelda' should not bury the Zelda games.
     """
-    def wrapper(*args, **kwargs):
-        try:
-            titles_lib.load_titledb()
-            return func(*args, **kwargs)
-        finally:
-            titles_lib.identification_in_progress_count -= 1
-            titles_lib.unload_titledb()
-    return wrapper
+    needle = _fold(query).strip()
+    if not needle:
+        return []
+    words = needle.split()
+
+    conn = titledb_store._connect_ro()
+    if conn is None:
+        logger.error('titledb has not been built yet.')
+        return None
+    try:
+        rows = conn.execute(_CATALOG_SQL).fetchall()
+    finally:
+        conn.close()
+
+    matches = []
+    for row in rows:
+        folded = _fold(row['name'])
+        # Whole query first, then every typed word at the start of a word: 'zelda breath
+        # of the wild' has to find 'The Legend of Zelda: Breath of the Wild'. Word starts
+        # only, or a stray letter would match half the catalog.
+        if needle in folded or all(re.search(rf'\b{re.escape(word)}', folded) for word in words):
+            matches.append((not folded.startswith(needle), folded, row))
+
+    matches.sort(key=lambda match: match[:2])
+    return [match[2] for match in matches[:limit + 1]]
 
 
 def _latest(apps):
     return max(apps, key=lambda a: int(a.app_version or 0)) if apps else None
 
 
-@with_titledb
 def resolve_target(app_id=None, app_version=None, title_id=None, catalog=False):
     """Target of a manual search from the UI.
 
@@ -243,10 +286,9 @@ def _catalog_date(value):
     return f'{text[:4]}-{text[4:6]}-{text[6:8]}' if len(text) == 8 and text.isdigit() else ''
 
 
-@with_titledb
 def search_catalog(query, limit=60):
     """Base games matching the query, flagged with whether the library owns them."""
-    records = titles_lib.search_base_games(query, limit)
+    records = search_base_games(query, limit)
     if records is None:
         return None
 
@@ -262,13 +304,13 @@ def search_catalog(query, limit=60):
         'results': [{
             'title_id': record['id'],
             'name': record['name'],
-            'iconUrl': record.get('iconUrl'),
-            'bannerUrl': record.get('bannerUrl'),
+            'iconUrl': record['icon_url'],
+            'bannerUrl': record['banner_url'],
             'owned': record['id'] in owned,
             # Enough to tell two games with the same name apart, no extra lookup: these
             # fields are already on the record the scan just walked.
-            'release_date': _catalog_date(record.get('releaseDate')),
-            'publisher': record.get('publisher') or '',
+            'release_date': _catalog_date(record['release_date']),
+            'publisher': record['publisher'] or '',
         } for record in records],
         'truncated': truncated,
     }
