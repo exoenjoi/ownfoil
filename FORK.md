@@ -202,6 +202,10 @@ opening a browser at startup, LAN IP on the setup page.
 
 - Image: `ghcr.io/exoenjoi/ownfoil:latest`, public, amd64 + arm64. Rebuilt by GitHub Actions on
   every push to `master` (`.github/workflows/docker.yml`, uses the built-in token, no secret).
+- **`downloader` has no `latest`.** The workflow only auto-builds `master`, so a testable image of
+  the branch comes from pushing a tag: `git tag -a 2.4.0-downloader.N -m '…' && git push origin
+  2.4.0-downloader.N` builds `ghcr.io/exoenjoi/ownfoil:2.4.0-downloader.N` (the workflow's tag
+  filter is `*.*.*`). Bump N, never move an existing tag — the running instance pins one.
 - Dropped two upstream-only workflows: the stale-issue bot, and the titledb build — the app pulls
   titledb from upstream's repo (`TITLEDB_ARTEFACTS_URL` in `constants.py`).
 - Sync with upstream: `git fetch upstream && git merge upstream/master`. Watch `upstream/develop`
