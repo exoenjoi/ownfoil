@@ -354,6 +354,7 @@ def search_base_games(query, limit=60):
     needle = _fold(query).strip()
     if not needle:
         return []
+    words = needle.split()
 
     matches = []
     for record in _titles_db.values():
@@ -363,7 +364,10 @@ def search_base_games(query, limit=60):
         if not app_id or not name or not app_id.endswith('000'):
             continue
         folded = _fold(name)
-        if needle in folded:
+        # Whole query first, then every typed word at the start of a word: 'zelda breath
+        # of the wild' has to find 'The Legend of Zelda: Breath of the Wild'. Word starts
+        # only, or a stray letter would match half the catalog.
+        if needle in folded or all(re.search(rf'\b{re.escape(word)}', folded) for word in words):
             matches.append((not folded.startswith(needle), folded, record))
 
     matches.sort(key=lambda match: match[:2])

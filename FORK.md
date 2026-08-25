@@ -109,6 +109,18 @@ Decisions:
 - **A release with 0 seeder is dropped in `rank_releases()`, whatever `min_seeders` says.** It is not
   an override the user might want, it is undownloadable. Releases merely *below* `min_seeders` stay,
   greyed out with the reason — that distinction is the point.
+- **A missing file extension only sinks a release that cannot prove it is a Switch dump.** An app id,
+  a title id or the `NSW` scene tag is proof enough — `…[01007EF00011E000][v1048576] 1G+1U+2D` and
+  `…_v1.9.0_NSW-SUXXORS` are real releases that used to be refused for "no Switch file extension".
+  A soundtrack, a PDF or a WiiU `.wua` carries none of the three and is still refused. An unknown
+  format scores 0 on the extension preference, so a named `.nsp` still outranks it.
+- **`\b` is the wrong boundary for release names** — `_` is a word character, so `\bv196608\b` never
+  matches `…_v196608_NSW-…`, and `\bxci\b` never matches `SuperXCi`. `TOKEN_START` / `TOKEN_END` in
+  `downloader.py` say what is meant instead: a token edge is anything that is not a letter or digit.
+- **The catalog search matches the whole query, or every typed word at the start of a word.** Plain
+  substring alone means `zelda breath of the wild` finds nothing, because titledb calls it
+  `The Legend of Zelda: Breath of the Wild`. Word starts only, or a stray letter matches half the
+  catalog.
 - **The modal's column sort mutates `releaseSearchResults` in place.** `grabRelease(index)` looks its
   release up by index in that array, so sorting a copy would grab the wrong release. Verified in a
   browser (stubbed ajax, clicked a row after sorting, compared the grabbed title to the row's).

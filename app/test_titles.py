@@ -103,6 +103,17 @@ def test_the_match_ignores_case_and_accents():
     assert [r['id'] for r in search('POKÉMON É')] == ['0100ABCDEF012000']
 
 
+def test_the_typed_words_may_be_scattered_through_the_name():
+    # "zelda breath of the wild" must find "The Legend of Zelda: Breath of the Wild",
+    # where the typed words are there but not side by side.
+    assert [r['id'] for r in search('super odyssey')] == ['0100000000010000']
+
+
+def test_a_typed_word_matches_only_at_the_start_of_a_word():
+    # Otherwise a stray letter matches half the catalog: 'e' is not a word of this name.
+    assert [r['id'] for r in search('pokemon e')] == ['0100ABCDEF012000']
+
+
 def test_prefix_matches_come_first():
     names = [r['name'] for r in search('pokemon')]
     assert names == ['Pokémon Écarlate', 'A Game About Pokemon']
