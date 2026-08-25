@@ -24,7 +24,10 @@ def _norm(value):
 
 
 def _ext_of(release_title):
-    match = re.search(r'\b(nsp|nsz|xci|xcz)\b', (release_title or '').lower())
+    # "SuperXCI" / "SuperNSP" is scene naming for a merged dump (base + updates + DLCs).
+    # It is still an XCI, still an NSP — but the word boundary falls before "Super", so
+    # the prefix has to be spelled out or the release reads as having no extension at all.
+    match = re.search(r'\b(?:super)?(nsp|nsz|xci|xcz)\b', (release_title or '').lower())
     return match.group(1) if match else None
 
 

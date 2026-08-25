@@ -53,6 +53,16 @@ def test_base_game_is_never_taken_for_an_update():
     assert 'version marker' in reason
 
 
+def test_a_super_dump_keeps_its_extension():
+    # "SuperXCI" / "SuperNSP" is scene naming for a merged dump — base, updates and DLCs
+    # in one file. It is still an XCI, still an NSP, and was being refused for having
+    # "no Switch file extension" because the word boundary fell before "Super".
+    assert downloader._ext_of('Zelda V1.6.0 Incl. All Dlcs SuperXCi PROPER - CLC') == 'xci'
+    assert downloader._ext_of('Zelda V1.6.0 Incl. All Dlcs SuperNSP PROPER - CLC') == 'nsp'
+    chosen, reason = best(['Mario Kart 8 Deluxe [v196608] Incl. All Dlcs SuperXCi - CLC'])
+    assert chosen is not None, reason
+
+
 def test_another_game_is_rejected():
     chosen, reason = best(['Super Mario Odyssey [v196608].nsp'])
     assert chosen is None
