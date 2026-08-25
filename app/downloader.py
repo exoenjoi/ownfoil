@@ -23,17 +23,26 @@ def _norm(value):
     return re.sub(r'[^a-z0-9]', '', (value or '').lower())
 
 
+# Release names are not prose and \b is the wrong tool on them: '_' is a word character,
+# so \b never falls inside The_Legend_of_Zelda_v1.9.0_NSW-SUXXORS. These two say what is
+# actually meant — a token edge is anything that is not a letter or a digit.
+TOKEN_START = r'(?<![a-z0-9])'
+TOKEN_END = r'(?![a-z0-9])'
+
+
 def _ext_of(release_title):
     # "SuperXCI" / "SuperNSP" is scene naming for a merged dump (base + updates + DLCs).
-    # It is still an XCI, still an NSP — but the word boundary falls before "Super", so
-    # the prefix has to be spelled out or the release reads as having no extension at all.
-    match = re.search(r'\b(?:super)?(nsp|nsz|xci|xcz)\b', (release_title or '').lower())
+    # It is still an XCI, still an NSP, so the prefix is spelled out here rather than
+    # left to a boundary that does not exist between "Super" and "XCI".
+    match = re.search(rf'{TOKEN_START}(?:super)?(nsp|nsz|xci|xcz){TOKEN_END}',
+                      (release_title or '').lower())
     return match.group(1) if match else None
 
 
 def _has_token(release_title, number):
     """True if the number appears as a standalone token, optionally prefixed by v."""
-    return re.search(rf'\bv?0*{number}\b', (release_title or '').lower()) is not None
+    return re.search(rf'{TOKEN_START}v?0*{number}{TOKEN_END}',
+                     (release_title or '').lower()) is not None
 
 
 # ---------------------------------------------------------------- ranking (pure)
@@ -79,9 +88,13 @@ def rank_releases(releases, target, filters):
         has_app_id = bool(app_id_norm) and app_id_norm in title_norm
         has_title_id = bool(title_id_norm) and title_id_norm in title_norm
 
-        if ext is None:
+        # No extension token is only damning when nothing else proves the release is a
+        # Switch dump. An app id, a title id or the NSW scene tag prove it — a soundtrack
+        # or a WiiU rip carries none of them.
+        if ext is None and not (has_app_id or has_title_id
+                                or re.search(rf'{TOKEN_START}nsw{TOKEN_END}', title.lower())):
             reason = 'No Switch file extension in the release name.'
-        elif ext not in pref_rank:
+        elif ext is not None and ext not in pref_rank:
             reason = f'Extension {ext} is not in the preferred list.'
         elif not (name_norm and name_norm in title_norm) and not has_app_id:
             reason = 'Release name matches neither the game name nor its app id.'

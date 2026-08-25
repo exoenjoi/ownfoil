@@ -63,6 +63,26 @@ def test_a_super_dump_keeps_its_extension():
     assert chosen is not None, reason
 
 
+def test_a_release_naming_the_app_id_needs_no_extension():
+    # No extension token in the name, but it carries the app id: nothing but a Switch
+    # dump does that, so refusing it for "no Switch file extension" was wrong.
+    chosen, reason = best(['Mario Kart 8 Deluxe [0100152000022800] [v196608] 1G+1U+2D'])
+    assert chosen is not None, reason
+
+
+def test_a_scene_release_tagged_nsw_needs_no_extension():
+    # NSW is the scene tag for a Switch dump; those releases never spell the extension out.
+    chosen, reason = best(['Mario_Kart_8_Deluxe_Update_v196608_PROPER_NSW-SUXXORS'])
+    assert chosen is not None, reason
+
+
+def test_a_soundtrack_is_still_refused():
+    # The extension check earns its keep here: same game name, no dump in sight.
+    chosen, reason = best(['Mario Kart 8 Deluxe v196608 Original Soundtrack [FLAC]'])
+    assert chosen is None
+    assert 'No Switch file extension' in reason
+
+
 def test_another_game_is_rejected():
     chosen, reason = best(['Super Mario Odyssey [v196608].nsp'])
     assert chosen is None
